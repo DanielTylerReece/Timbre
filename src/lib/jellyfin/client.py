@@ -363,6 +363,39 @@ class JellyfinClient:
         return (data or {}).get("Items", [])
 
     # ------------------------------------------------------------------ #
+    # Playlists.                                                         #
+    # ------------------------------------------------------------------ #
+
+    def create_playlist(self, name, ids=()) -> str:
+        """Create a playlist (POST /Playlists) and return its new id.
+
+        ``ids`` is the initial ordered track id list (may be empty). The body
+        carries ``MediaType="Audio"`` and the owning ``UserId`` so the playlist
+        lands in this user's library. Returns the server-assigned playlist id
+        from the ``Id`` field of the response. Raises ``JellyfinError`` on HTTP
+        error and ``JellyfinNetworkError`` on transport failure.
+        """
+        body = {
+            "Name": name,
+            "Ids": list(ids),
+            "UserId": self.user_id,
+            "MediaType": "Audio",
+        }
+        data = self._req("POST", "/Playlists", json_body=body)
+        return (data or {}).get("Id")
+
+    def add_playlist_items(self, playlist_id, ids) -> None:
+        """Append track ids to an existing playlist.
+
+        POST /Playlists/{id}/Items?ids=...&userId=... — Jellyfin takes the ids
+        as a comma-joined query parameter (no JSON body). A 204 No Content is
+        expected. Raises ``JellyfinError`` on HTTP error and
+        ``JellyfinNetworkError`` on transport failure.
+        """
+        params = {"ids": ",".join(ids), "userId": self.user_id}
+        self._req("POST", f"/Playlists/{playlist_id}/Items", params=params)
+
+    # ------------------------------------------------------------------ #
     # Metadata edit (admin).                                             #
     # ------------------------------------------------------------------ #
 

@@ -681,6 +681,82 @@ def toggle_favorite(kind, item_id, current_state, owner=None, on_applied=None):
     return new_state
 
 
+def add_track_to_playlist(playlist_id, playlist_name, track_id, owner=None):
+    """Add one track to an EXISTING playlist: server + local write-through.
+
+    Cheap-read duplicate guard FIRST (``db.playlist_has_track``): if the track
+    is already in the playlist, toast "Already in <name>" and make NO server
+    call. Otherwise issue ``client.add_playlist_items`` off the main thread; on
+    success mirror into SQLite (``db.append_playlist_track`` — appends + bumps
+    track_count) and toast "Added to <name>". On failure toast a server-
+    unreachable message. Never silent.
+
+    ``owner`` is the run_async owner-guard widget (gates the toast/db callback
+    after the track row is torn down).
+    """
+    if client is None or track_id is None or playlist_id is None:
+        send_toast(_("Couldn't add — not connected"), 2)
+        return
+    if db is not None and db.playlist_has_track(playlist_id, track_id):
+        send_toast(_("Already in {}").format(playlist_name), 2)
+        return
+
+    def work():
+        client.add_playlist_items(playlist_id, [track_id])
+        if db is not None:
+            try:
+                db.append_playlist_track(playlist_id, track_id)
+            except Exception:
+                logger.debug("playlist db mirror failed for %s", playlist_id,
+                             exc_info=True)
+
+    def on_done(_result):
+        send_toast(_("Added to {}").format(playlist_name), 2)
+
+    def on_error(exc):
+        logger.info("add_track_to_playlist failed for %s: %s",
+                    playlist_id, exc)
+        send_toast(_("Couldn't add — server unreachable"), 3)
+
+    run_async(work, on_done=on_done, on_error=on_error, owner=owner)
+
+
+def create_playlist_with_track(name, track_id, owner=None):
+    """Create a new playlist containing ``track_id``: server + write-through.
+
+    Issues ``client.create_playlist(name, [track_id])`` off the main thread,
+    then mirrors the new playlist into SQLite (upsert + append the track) so
+    Collection's playlist list reflects it without a full sync. Toasts
+    "Playlist <name> created" on success, a server-unreachable message on
+    failure. Never silent.
+    """
+    if client is None or track_id is None:
+        send_toast(_("Couldn't create — not connected"), 2)
+        return
+
+    def work():
+        new_id = client.create_playlist(name, [track_id])
+        if db is not None and new_id:
+            try:
+                db.upsert_playlists(
+                    [{"id": new_id, "name": name, "track_count": 0}]
+                )
+                db.append_playlist_track(new_id, track_id)
+            except Exception:
+                logger.debug("new-playlist db mirror failed for %s", new_id,
+                             exc_info=True)
+        return new_id
+
+    def on_done(_new_id):
+        send_toast(_("Playlist {} created").format(name), 2)
+
+    def on_error(exc):
+        logger.info("create_playlist_with_track failed for %r: %s", name, exc)
+        send_toast(_("Couldn't create — server unreachable"), 3)
+
+    run_async(work, on_done=on_done, on_error=on_error, owner=owner)
+
+
 def create_jellyfin_session():
     """Phase 0 stub — returns None.  Jellyfin session object created in Phase 1."""
     return None

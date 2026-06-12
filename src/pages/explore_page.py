@@ -88,6 +88,13 @@ class HTExplorePage(Page):
         # Tracks the query of the in-flight suggestions fetch so a stale
         # (slower) response that lands after the text changed is dropped.
         self._suggest_query = None
+        # The query last COMMITTED (Enter / suggestion pick). Gtk.SearchEntry
+        # fires a DELAYED search-changed (~150ms) after set_text, which lands
+        # AFTER the commit — without this, that late signal resubmits the
+        # debouncer and the suggestions popover reopens over the just-pushed
+        # search page. We drop exactly one search-changed whose text equals the
+        # committed query; a real later edit (different text) clears it.
+        self._committed_query = None
 
         self._build_search_entry()
 
@@ -183,6 +190,16 @@ class HTExplorePage(Page):
 
     def _on_search_changed(self, entry):
         text = entry.get_text().strip()
+        # Layer 2 (source): swallow the delayed search-changed that set_text
+        # fires AFTER a commit. If the entry text still equals what we just
+        # committed, this is that stale signal — drop it once (without
+        # resubmitting the debouncer) so the popover can't reopen. Any real
+        # later edit produces different text and falls through normally.
+        if self._committed_query is not None and text == self._committed_query:
+            self._committed_query = None
+            return
+        # A genuine edit to other text invalidates a pending commit guard.
+        self._committed_query = None
         if len(text) < _SUGGEST_MIN_CHARS:
             # Below threshold: drop the dropdown and any pending fetch.
             self._suggest_query = None
@@ -252,6 +269,13 @@ class HTExplorePage(Page):
         popover = getattr(self, "_suggest_popover", None)
         if entry is None or popover is None:
             return
+        # Layer 1 (safety net): never pop the dropdown when Explore is not the
+        # visible nav page. A committed search pushes a search page on top of
+        # Explore (still in the stack, so run_async's owner guard passes); a
+        # late suggestions fetch must not reopen the popover over that page.
+        nav = utils.navigation_view
+        if nav is not None and nav.get_visible_page() is not self:
+            return
         # Match the dropdown width to the entry's current allocation.
         width = entry.get_allocated_width()
         if width > 0:
@@ -299,6 +323,15 @@ class HTExplorePage(Page):
         self._hide_suggestions()
         if not text:
             return
+        # Arm the one-shot guard against the delayed search-changed that
+        # set_text(name) (suggestion pick) will emit ~150ms from now. We store
+        # the entry's CURRENT text (post-set_text) — that is what the late
+        # signal will carry. (On the Enter path the entry already holds `query`,
+        # so this matches too.)
+        entry = getattr(self, "search_entry", None)
+        self._committed_query = (
+            entry.get_text().strip() if entry is not None else text
+        )
         nav = utils.navigation_view
         visible = nav.get_visible_page() if nav is not None else None
         if visible is not None and visible.get_tag() == "search":

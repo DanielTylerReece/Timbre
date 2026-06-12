@@ -496,6 +496,74 @@ class Database:
 
         return self.write(fn)
 
+    def all_playlists(self):
+        """All playlists as ``[{"id", "name"}]``, name order (NOCASE).
+
+        A tiny indexed read used by the track 3-dot "Add to a playlist" submenu
+        to populate the existing-playlist list when the menu opens. The result
+        is intentionally minimal (id + name only) — the menu only needs labels
+        + action targets.
+        """
+        return self.read(
+            lambda c: _dicts(
+                c.execute(
+                    "SELECT id, name FROM playlists ORDER BY name COLLATE NOCASE"
+                ).fetchall()
+            )
+        )
+
+    def playlist_has_track(self, playlist_id, track_id):
+        """True if ``track_id`` is already in ``playlist_id`` (cheap indexed
+        read). Used to short-circuit a duplicate add before any server call."""
+        return self.read(
+            lambda c: c.execute(
+                "SELECT 1 FROM playlist_tracks "
+                "WHERE playlist_id=? AND track_id=? LIMIT 1",
+                (playlist_id, track_id),
+            ).fetchone()
+            is not None
+        )
+
+    def append_playlist_track(self, playlist_id, track_id):
+        """Append ``track_id`` to ``playlist_id`` and bump its ``track_count``.
+
+        Local write-through after a successful server add: appends the track at
+        the next free position and increments the playlist's cached
+        ``track_count`` so Collection / playlist pages reflect the add without a
+        full re-sync. One writer transaction. No-op duplicate guard: if the
+        track is already present nothing is written and ``track_count`` is left
+        unchanged (the caller normally checks :meth:`playlist_has_track` first,
+        but this keeps the helper idempotent).
+        """
+
+        def fn(conn):
+            already = conn.execute(
+                "SELECT 1 FROM playlist_tracks "
+                "WHERE playlist_id=? AND track_id=? LIMIT 1",
+                (playlist_id, track_id),
+            ).fetchone()
+            if already is not None:
+                return False
+            row = conn.execute(
+                "SELECT COALESCE(MAX(position) + 1, 0) AS pos "
+                "FROM playlist_tracks WHERE playlist_id=?",
+                (playlist_id,),
+            ).fetchone()
+            pos = row["pos"] if row else 0
+            conn.execute(
+                "INSERT INTO playlist_tracks(playlist_id, track_id, position) "
+                "VALUES(?,?,?)",
+                (playlist_id, track_id, pos),
+            )
+            conn.execute(
+                "UPDATE playlists SET track_count = COALESCE(track_count, 0) + 1 "
+                "WHERE id=?",
+                (playlist_id,),
+            )
+            return True
+
+        return self.write(fn)
+
     # ------------------------------------------------------------------ #
     # meta + ai_cache helpers.                                           #
     # ------------------------------------------------------------------ #

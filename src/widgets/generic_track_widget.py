@@ -181,14 +181,17 @@ class HTGenericTrackWidget(Gtk.ListBoxRow, IDisconnectable):
     # Context menu                                                       #
     # ------------------------------------------------------------------ #
 
-    def _on_menu_activate(self, *args):
+    def _on_menu_activate(self, menu_button, *args):
+        # Repopulate the playlists submenu every time the menu opens so a
+        # playlist created since the last open shows up. The static items +
+        # actions are installed exactly once (menu_activated guard) — only the
+        # dynamic playlist submenu is rebuilt each open.
+        if menu_button.get_active():
+            self._refresh_playlists_submenu()
+
         if self.menu_activated:
             return
         self.menu_activated = True
-
-        # The playlists submenu is unused in Phase 5 (playlist editing lands
-        # later); hide it so the menu stays clean.
-        self.playlists_submenu.remove_all()
 
         if self.artist_id:
             self.track_menu.prepend(
@@ -204,13 +207,69 @@ class HTGenericTrackWidget(Gtk.ListBoxRow, IDisconnectable):
         action_entries = [
             ("play-next", self._play_next),
             ("add-to-queue", self._add_to_queue),
-            ("add-to-my-collection", self._toggle_favorite),
             ("copy-share-url", self._copy_share_url),
+            ("new-playlist", self._on_new_playlist),
         ]
         for name, callback in action_entries:
             action = Gio.SimpleAction.new(name, None)
             self.signals.append((action, action.connect("activate", callback)))
             self.action_group.add_action(action)
+
+        # "Add to a playlist" -> a playlist id (the "s" variant target carries
+        # which playlist). One parametrized action backs every dynamic submenu
+        # item; the id arrives as the activation parameter.
+        add_action = Gio.SimpleAction.new(
+            "add-to-playlist", GLib.VariantType.new("s")
+        )
+        self.signals.append((
+            add_action, add_action.connect("activate", self._on_add_to_playlist)
+        ))
+        self.action_group.add_action(add_action)
+
+    def _refresh_playlists_submenu(self):
+        """Repopulate the playlists submenu from the LOCAL db, off the main
+        thread.
+
+        The db read runs via run_async (owner-guarded) so the main loop is
+        never blocked — CLAUDE.md forbids db access on the main thread. The
+        submenu is rebuilt on the idle callback once the (tiny, indexed)
+        playlist list lands. The "New playlist…" entry is always first; each
+        existing playlist becomes a Gio.MenuItem whose action target is the
+        playlist id (built in python, never hardcoded in the .blp).
+        """
+        db = utils.db
+        if db is None:
+            return
+
+        def work():
+            return db.all_playlists()
+
+        utils.run_async(
+            work,
+            on_done=self._build_playlists_submenu,
+            owner=self,
+        )
+
+    def _build_playlists_submenu(self, playlists):
+        """Main-loop: rebuild the playlists submenu from a playlist-dict list."""
+        submenu = self.playlists_submenu
+        submenu.remove_all()
+        submenu.append(_("New playlist…"), "trackwidget.new-playlist")
+        for pl in playlists:
+            pid = pl.get("id")
+            name = pl.get("name") or _("Unknown")
+            if not pid:
+                continue
+            item = Gio.MenuItem.new(name, None)
+            item.set_action_and_target_value(
+                "trackwidget.add-to-playlist", GLib.Variant("s", pid)
+            )
+            submenu.append_item(item)
+        # Cache id->name so the action handler can name the toast without
+        # another db read.
+        self._playlist_names = {
+            pl.get("id"): (pl.get("name") or _("Unknown")) for pl in playlists
+        }
 
     def _play_next(self, *args):
         utils.player_object.add_next(self.track)
@@ -218,19 +277,40 @@ class HTGenericTrackWidget(Gtk.ListBoxRow, IDisconnectable):
     def _add_to_queue(self, *args):
         utils.player_object.add_to_queue(self.track)
 
-    def _toggle_favorite(self, *args):
-        if self.track_id is None or utils.client is None:
+    def _on_add_to_playlist(self, _action, target):
+        """Add this track to the playlist named by the "s" target variant."""
+        if target is None:
             return
-
-        def applied(state):
-            self.is_favorite = bool(state)
-            if isinstance(self.track, dict):
-                self.track["is_favorite"] = self.is_favorite
-
-        self.is_favorite = utils.toggle_favorite(
-            "track", self.track_id, self.is_favorite,
-            owner=self.get_root(), on_applied=applied,
+        playlist_id = target.get_string()
+        name = getattr(self, "_playlist_names", {}).get(
+            playlist_id, _("playlist")
         )
+        utils.add_track_to_playlist(
+            playlist_id, name, self.track_id, owner=self.get_root()
+        )
+
+    def _on_new_playlist(self, *args):
+        """Open the new-playlist dialog; on confirm, create it WITH this track."""
+        from ..new_playlist import NewPlaylistWindow
+
+        dialog = NewPlaylistWindow()
+
+        def on_create(_dlg, title, _description):
+            title = (title or "").strip()
+            if not title:
+                return
+            utils.create_playlist_with_track(
+                title, self.track_id, owner=self.get_root()
+            )
+
+        # The dialog is short-lived and self-owned (Adw.Dialog presented on the
+        # root); its create-playlist handler is disconnected when the dialog is
+        # finalized after close, so it is not tracked in self.signals (which is
+        # for the long-lived row's own signals).
+        dialog.connect("create-playlist", on_create)
+        dialog.connect("create-playlist", lambda *a: dialog.close())
+        root = self.get_root()
+        dialog.present(root)
 
     def _copy_share_url(self, *args):
         server_url = ""
