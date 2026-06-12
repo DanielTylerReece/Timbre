@@ -4,7 +4,7 @@ pkgver=0.1.0
 pkgrel=1
 pkgdesc="GTK4/libadwaita Jellyfin music client with gapless playback, MPRIS, and AI-assisted discovery"
 arch=('any')
-url="https://github.com/tylerreece/timbre"
+url="https://github.com/DanielTylerReece/Timbre"
 license=('GPL-3.0-or-later')
 depends=(
   'gtk4'

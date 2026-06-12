@@ -128,8 +128,8 @@ class TimbreApplication(Adw.Application):
             version="0.1.0",
             developers=["Tyler Reece https://github.com/tylerreece"],
             license_type="GTK_LICENSE_GPL_3_0",
-            issue_url="https://github.com/tylerreece/timbre/issues",
-            website="https://github.com/tylerreece/timbre",
+            issue_url="https://github.com/DanielTylerReece/Timbre/issues",
+            website="https://github.com/DanielTylerReece/Timbre",
         )
         # Attribution to upstream project
         about.add_acknowledgement_section(

@@ -27,9 +27,9 @@
 
   <launchable type="desktop-id">io.github.tylerreece.timbre.desktop</launchable>
 
-  <url type="homepage">https://github.com/tylerreece/timbre</url>
-  <url type="bugtracker">https://github.com/tylerreece/timbre/issues</url>
-  <url type="vcs-browser">https://github.com/tylerreece/timbre</url>
+  <url type="homepage">https://github.com/DanielTylerReece/Timbre</url>
+  <url type="bugtracker">https://github.com/DanielTylerReece/Timbre/issues</url>
+  <url type="vcs-browser">https://github.com/DanielTylerReece/Timbre</url>
 
   <translation type="gettext">timbre</translation>
 

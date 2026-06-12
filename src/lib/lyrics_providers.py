@@ -40,7 +40,7 @@ _TIMEOUT = 10
 
 # LRCLIB asks clients to identify themselves via User-Agent.
 # https://lrclib.net/docs
-_USER_AGENT = "Timbre/0.1.0 (https://github.com/tylerreece/timbre)"
+_USER_AGENT = "Timbre/0.1.0 (https://github.com/DanielTylerReece/Timbre)"
 
 _LRCLIB_GET_URL = "https://lrclib.net/api/get"
 _LRCLIB_SEARCH_URL = "https://lrclib.net/api/search"
