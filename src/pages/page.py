@@ -82,6 +82,12 @@ class Page(Adw.NavigationPage, IDisconnectable):
         this sweep those would survive pop and pin the page via the bound-method
         and closure references they hold.
         """
+        # Mark the page dead for run_async's owner guard. The guard's
+        # get_realized() fallback is too weak here: during a NavigationView
+        # pop the page can still be realized after this teardown ran, letting
+        # a late on_done fire into nulled attributes (seen: the Explore
+        # suggestions fetch crashing on _suggest_list = None).
+        self._alive = False
         scope = getattr(self, "_section_signals", None)
         if scope:
             for obj, signal_id in scope:

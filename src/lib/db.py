@@ -835,16 +835,22 @@ class Database:
         """NOCASE substring search; prefix matches rank ahead of mid-string.
 
         Returns a dict with keys ``artists``, ``albums``, ``tracks``,
-        ``genres`` — each a list of dicts.
+        ``genres`` — each a list of dicts. LIKE wildcards in the user's query
+        are escaped (parity with :meth:`search_suggestions` — the committed
+        search must match what the suggestions dropdown showed).
         """
-        like = f"%{q}%"
-        prefix = f"{q}%"
+        esc = ((q or "").replace("\\", "\\\\")
+               .replace("%", "\\%").replace("_", "\\_"))
+        like = f"%{esc}%"
+        prefix = f"{esc}%"
 
         def one(c, table, name_col="name"):
             return _dicts(
                 c.execute(
                     f"SELECT * FROM {table} WHERE {name_col} LIKE ? "
-                    "ORDER BY CASE WHEN {col} LIKE ? THEN 0 ELSE 1 END, "
+                    "ESCAPE '\\' "
+                    "ORDER BY CASE WHEN {col} LIKE ? ESCAPE '\\' "
+                    "THEN 0 ELSE 1 END, "
                     "{col} COLLATE NOCASE LIMIT ?".format(col=name_col),
                     (like, prefix, limit),
                 ).fetchall()
@@ -857,6 +863,63 @@ class Database:
                 "tracks": one(c, "tracks"),
                 "genres": one(c, "genres"),
             }
+
+        return self.read(fn)
+
+    def search_suggestions(self, query, limit=8):
+        """Type-ahead suggestions for the Explore search dropdown.
+
+        Returns up to ``limit`` rows of ``{"name", "kind"}`` where ``kind`` is
+        ``"artist" | "album" | "track"``. Mirrors :meth:`search`'s NOCASE
+        substring matching (prefix matches rank ahead of mid-string), but:
+
+        * escapes the LIKE wildcards ``%`` / ``_`` (and the escape char itself)
+          in the user's query so a literal ``%`` matches a literal ``%`` rather
+          than "anything" — the dropdown query is per-keystroke user text;
+        * dedupes by ``name.lower()`` across ALL kinds (a track and album of the
+          same name appear once, first writer wins);
+        * orders artists first, then albums, then tracks, capping the merged
+          list at ``limit``.
+
+        Read-only helper (per-thread read conn), safe off the main thread.
+        """
+        text = (query or "").strip()
+        if not text:
+            return []
+        # Escape LIKE metacharacters so user-typed % / _ are literal. ESCAPE '\'
+        # then quotes any \, %, _ in the term before wrapping in wildcards.
+        esc = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{esc}%"
+        prefix = f"{esc}%"
+
+        def one(c, table):
+            return [
+                r["name"]
+                for r in c.execute(
+                    f"SELECT name FROM {table} WHERE name LIKE ? ESCAPE '\\' "
+                    "ORDER BY CASE WHEN name LIKE ? ESCAPE '\\' THEN 0 ELSE 1 "
+                    "END, name COLLATE NOCASE LIMIT ?",
+                    (like, prefix, limit),
+                ).fetchall()
+            ]
+
+        def fn(c):
+            out = []
+            seen = set()
+            for kind, table in (
+                ("artist", "artists"),
+                ("album", "albums"),
+                ("track", "tracks"),
+            ):
+                for name in one(c, table):
+                    key = (name or "").lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append({"name": name, "kind": kind})
+                    if len(out) >= limit:
+                        return out
+            return out
 
         return self.read(fn)
 

@@ -12,8 +12,10 @@
 """The Explore page — search + genres / decades / years.
 
 Top-to-bottom (High Tide explore look):
-  1. Search entry (debounced 250ms, >=2 chars) — pushes / live-updates a
-     SearchPage.
+  1. Search entry. Typing (debounced 250ms, >=3 trimmed chars) shows a
+     SUGGESTIONS dropdown under the entry; typing alone NEVER pushes a search
+     page. Pressing Enter (``activate``) or picking a suggestion COMMITS the
+     query — pushing an HTSearchPage, or live-updating the one already on top.
   2. Genres — a 2-per-row grid of large rounded buttons (bold name + "N
      tracks"). HIDDEN only when the library has NO genre with content.
   3. Decades — a 2-per-row grid of large rounded buttons ("1970s" + "N
@@ -48,6 +50,16 @@ _MIN_GENRES = 1
 _GRID_COLUMNS = 2
 # Year-filtered albums list page size.
 _ALBUMS_LIMIT = 50
+# Minimum trimmed length before the suggestions dropdown fires.
+_SUGGEST_MIN_CHARS = 3
+# Max suggestion rows in the dropdown (matches db.search_suggestions default).
+_SUGGEST_LIMIT = 8
+# Human-readable kind captions for suggestion rows.
+_KIND_CAPTIONS = {
+    "artist": _("Artist"),
+    "album": _("Album"),
+    "track": _("Track"),
+}
 
 
 class HTExplorePage(Page):
@@ -65,13 +77,17 @@ class HTExplorePage(Page):
         self.set_tag("explore")
         self.set_title(_("Explore"))
 
+        # Typing fires SUGGESTIONS (>=3 trimmed chars), never a search push.
         self._debouncer = SearchDebouncer(
-            on_fire=self._fire_search,
-            min_chars=2,
+            on_fire=self._request_suggestions,
+            min_chars=_SUGGEST_MIN_CHARS,
             delay=250,
             schedule=GLib.timeout_add,
             cancel=GLib.source_remove,
         )
+        # Tracks the query of the in-flight suggestions fetch so a stale
+        # (slower) response that lands after the text changed is dropped.
+        self._suggest_query = None
 
         self._build_search_entry()
 
@@ -108,12 +124,52 @@ class HTExplorePage(Page):
             placeholder_text=_("Search artists, albums, tracks…"),
             margin_start=12, margin_end=12, margin_top=12, hexpand=True,
         )
+        # Typing -> debounced suggestions only (no push). Enter -> commit.
+        # stop-search (Escape) and focus loss hide the dropdown.
         self.signals.append((
             entry, entry.connect("search-changed", self._on_search_changed)
         ))
+        self.signals.append((
+            entry, entry.connect("activate", self._on_entry_activate)
+        ))
+        self.signals.append((
+            entry, entry.connect("stop-search", self._on_stop_search)
+        ))
+        focus = Gtk.EventControllerFocus()
+        self.signals.append((
+            focus, focus.connect("leave", self._on_entry_focus_leave)
+        ))
+        entry.add_controller(focus)
+        self._focus_controller = focus
         self.content.append(entry)
         # Exposed so the Ctrl+F shortcut can focus it (window.focus_search()).
         self.search_entry = entry
+        self._build_suggestions_popover(entry)
+
+    def _build_suggestions_popover(self, entry):
+        """Build the (initially empty, hidden) suggestions dropdown.
+
+        Parented to the entry, BOTTOM, ``autohide=False`` so it never grabs
+        focus — the user keeps typing while suggestions are visible. The
+        popover is unparented in ``disconnect_all`` (a parented popover left
+        behind would pin the entry and leak the page).
+        """
+        listbox = Gtk.ListBox(
+            selection_mode=Gtk.SelectionMode.NONE,
+            css_classes=["menu"],
+        )
+        self.signals.append((
+            listbox, listbox.connect("row-activated", self._on_suggestion_row)
+        ))
+        popover = Gtk.Popover(
+            autohide=False, has_arrow=False,
+            position=Gtk.PositionType.BOTTOM,
+            css_classes=["menu"],
+        )
+        popover.set_child(listbox)
+        popover.set_parent(entry)
+        self._suggest_list = listbox
+        self._suggest_popover = popover
 
     def focus_search(self):
         """Move keyboard focus to the search entry (Ctrl+F shortcut)."""
@@ -121,21 +177,138 @@ class HTExplorePage(Page):
         if entry is not None:
             entry.grab_focus()
 
+    # ------------------------------------------------------------------ #
+    # Typing -> suggestions (no push)                                    #
+    # ------------------------------------------------------------------ #
+
     def _on_search_changed(self, entry):
+        text = entry.get_text().strip()
+        if len(text) < _SUGGEST_MIN_CHARS:
+            # Below threshold: drop the dropdown and any pending fetch.
+            self._suggest_query = None
+            self._hide_suggestions()
         self._debouncer.submit(entry.get_text())
 
-    def _fire_search(self, query):
-        """Debouncer fire: push a SearchPage, or live-update the one on top."""
+    def _request_suggestions(self, query):
+        """Debouncer fire (>=3 chars): fetch suggestions off the main thread."""
+        db = utils.db
+        if db is None:
+            return
+        self._suggest_query = query
+
+        def work():
+            return db.search_suggestions(query, limit=_SUGGEST_LIMIT)
+
+        utils.run_async(
+            work,
+            on_done=lambda rows: self._render_suggestions(query, rows),
+            owner=self,
+        )
+
+    def _render_suggestions(self, query, rows):
+        """Main-loop: render suggestion rows, dropping stale responses."""
+        entry = getattr(self, "search_entry", None)
+        if entry is None:
+            return
+        # Stale-response guard: the entry text may have changed (or fallen
+        # below threshold) since this fetch was issued. run_async's owner guard
+        # only covers page teardown, not query churn.
+        if query != entry.get_text().strip() or query != self._suggest_query:
+            return
+        listbox = self._suggest_list
+        if listbox is None:  # torn down (defense for any late delivery)
+            return
+        child = listbox.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            listbox.remove(child)
+            child = nxt
+        if not rows:
+            self._hide_suggestions()
+            return
+        for row in rows:
+            listbox.append(self._make_suggestion_row(row))
+        self._show_suggestions()
+
+    def _make_suggestion_row(self, suggestion):
+        """A suggestion row: ellipsized name + dim kind caption."""
+        name = suggestion.get("name") or ""
+        kind = suggestion.get("kind") or ""
+        box = Gtk.Box(spacing=8, margin_top=4, margin_bottom=4,
+                      margin_start=8, margin_end=8)
+        box.append(Gtk.Label(label=name, xalign=0, hexpand=True, ellipsize=3,
+                             max_width_chars=32, can_target=False))
+        box.append(Gtk.Label(
+            label=_KIND_CAPTIONS.get(kind, kind.title()), xalign=1,
+            css_classes=["caption", "dim-label"], can_target=False))
+        row = Gtk.ListBoxRow(activatable=True)
+        row.set_child(box)
+        # Stash the committed text on the row for row-activated.
+        row._suggest_name = name
+        return row
+
+    def _show_suggestions(self):
+        entry = getattr(self, "search_entry", None)
+        popover = getattr(self, "_suggest_popover", None)
+        if entry is None or popover is None:
+            return
+        # Match the dropdown width to the entry's current allocation.
+        width = entry.get_allocated_width()
+        if width > 0:
+            popover.set_size_request(width, -1)
+        popover.popup()
+
+    def _hide_suggestions(self):
+        popover = getattr(self, "_suggest_popover", None)
+        if popover is not None:
+            popover.popdown()
+
+    def _on_entry_focus_leave(self, _controller):
+        self._hide_suggestions()
+
+    def _on_stop_search(self, _entry):
+        # Escape in the SearchEntry — hide the dropdown, cancel pending fetch.
+        self._suggest_query = None
+        self._hide_suggestions()
+
+    # ------------------------------------------------------------------ #
+    # Commit (Enter / suggestion click) -> push or live-update           #
+    # ------------------------------------------------------------------ #
+
+    def _on_entry_activate(self, entry):
+        self._commit_search(entry.get_text())
+
+    def _on_suggestion_row(self, _listbox, row):
+        name = getattr(row, "_suggest_name", None)
+        if name is None:
+            return
+        entry = getattr(self, "search_entry", None)
+        if entry is not None:
+            entry.set_text(name)
+        self._commit_search(name)
+
+    def _commit_search(self, query):
+        """Commit a query: push a SearchPage, or live-update the one on top.
+
+        Called only on Enter or suggestion selection — never from typing.
+        Cancels any pending suggestions fetch and hides the dropdown first.
+        """
+        text = (query or "").strip()
+        self._suggest_query = None
+        self._debouncer.cancel()
+        self._hide_suggestions()
+        if not text:
+            return
         nav = utils.navigation_view
         visible = nav.get_visible_page() if nav is not None else None
         if visible is not None and visible.get_tag() == "search":
             update = getattr(visible, "update_query", None)
             if callable(update):
-                update(query)
+                update(text)
                 return
         from .search_page import HTSearchPage
 
-        page = HTSearchPage(query)
+        page = HTSearchPage(text)
         page.set_tag("search")
         page.load()
         nav.push(page)
@@ -327,4 +500,13 @@ class HTExplorePage(Page):
             # collectable immediately (cancel() alone left a transient cycle).
             debouncer.dispose()
             self._debouncer = None
+        # A parented popover left behind keeps the entry (and thus the page)
+        # alive — unparent it explicitly. popdown first so it isn't visible
+        # mid-teardown.
+        popover = getattr(self, "_suggest_popover", None)
+        if popover is not None:
+            popover.popdown()
+            popover.unparent()
+            self._suggest_popover = None
+            self._suggest_list = None
         super().disconnect_all(*args)
