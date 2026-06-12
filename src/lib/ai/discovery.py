@@ -225,15 +225,22 @@ class Discovery:
     # Daily mixes                                                        #
     # ------------------------------------------------------------------ #
 
-    def daily_mixes(self):
+    def daily_mixes(self, force=False):
         """Four daily mixes ``[{name, description, track_ids}]``.
 
         Rebuilt only when ``meta['mixes_built_date'] != today``; otherwise served
         from the ``mix`` cache (keys '1'..'4'). Falls back to heuristic mixes
         when no provider is configured or the AI calls fail.
+
+        ``force=True`` (the Custom-mixes refresh button) bypasses the same-day
+        stamp and rebuilds unconditionally — AI when a provider is configured,
+        else the heuristic set, same as the normal path. A successful rebuild
+        re-stamps today's date so the daily logic stays coherent; if the rebuild
+        yields nothing (it should not — fallback always fills) the previous
+        cached set and its stamp are left untouched so the section never blanks.
         """
         today = self._today()
-        if self.db.meta_get("mixes_built_date") == today:
+        if not force and self.db.meta_get("mixes_built_date") == today:
             cached = self._load_cached_set("mix", _MIX_COUNT)
             if cached is not None:
                 return cached
@@ -244,6 +251,10 @@ class Discovery:
             mixes = self._build_mixes_ai(provider)
         if not mixes:
             mixes = self._mixes_fallback()
+        # Defensive: a forced rebuild must never overwrite the cache (and stamp)
+        # with an empty result — keep the prior mixes intact on the no-op case.
+        if not mixes:
+            return self.daily_mixes_cached()
 
         for i, m in enumerate(mixes, start=1):
             self._cache_set("mix", str(i), m)

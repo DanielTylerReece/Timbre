@@ -20,7 +20,7 @@
 
 from typing import Callable
 
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, GLib, GObject, Gtk
 
 from ..disconnectable_iface import IDisconnectable
 from ..lib import utils
@@ -43,7 +43,15 @@ class HTCarouselWidget(Gtk.Box, IDisconnectable):
 
     __gtype_name__ = "HTCarouselWidget"
 
+    # Emitted when the (opt-in) refresh button is clicked. The page connects
+    # via its tracked-signals list and drives the rebuild — the widget never
+    # stores a bound page method (leak rule).
+    __gsignals__ = {
+        "refresh-clicked": (GObject.SignalFlags.RUN_FIRST, None, ()),
+    }
+
     title_label = Gtk.Template.Child()
+    refresh_button = Gtk.Template.Child()
     next_button = Gtk.Template.Child()
     prev_button = Gtk.Template.Child()
     carousel_scrolled_window = Gtk.Template.Child()
@@ -65,6 +73,10 @@ class HTCarouselWidget(Gtk.Box, IDisconnectable):
         self.signals.append((
             self.more_button,
             self.more_button.connect("clicked", self.on_more_clicked),
+        ))
+        self.signals.append((
+            self.refresh_button,
+            self.refresh_button.connect("clicked", self._on_refresh_clicked),
         ))
 
         self.title = title
@@ -98,6 +110,35 @@ class HTCarouselWidget(Gtk.Box, IDisconnectable):
         """
         self.more_button.set_visible(True)
         self.year_function = function
+
+    def enable_refresh(self, enabled: bool = True) -> None:
+        """Opt-in: show the header refresh button (hidden by default).
+
+        Only sections that support a force-rebuild (the Custom mixes carousel)
+        call this. The button emits ``refresh-clicked``; the page wires that
+        signal and runs the rebuild off the main thread.
+        """
+        self.refresh_button.set_visible(enabled)
+
+    def set_refreshing(self, refreshing: bool) -> None:
+        """Reflect an in-flight refresh: insensitive button + spinner face.
+
+        While refreshing the button is desensitised and its icon is swapped for
+        an ``Adw.Spinner`` so the user sees the rebuild is running; when it
+        clears, the ``view-refresh-symbolic`` icon is restored and the button is
+        re-enabled. Safe to call repeatedly.
+        """
+        self.refresh_button.set_sensitive(not refreshing)
+        if refreshing:
+            spinner = Adw.Spinner()
+            self.refresh_button.set_child(spinner)
+        else:
+            # set_child(None) restores the implicit icon-name face.
+            self.refresh_button.set_child(None)
+            self.refresh_button.set_icon_name("view-refresh-symbolic")
+
+    def _on_refresh_clicked(self, *args):
+        self.emit("refresh-clicked")
 
     def set_items(self, items_list) -> None:
         """Populate the carousel with cards for ``items_list``."""

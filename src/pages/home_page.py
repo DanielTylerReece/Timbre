@@ -114,6 +114,9 @@ class HTHomePage(Page):
         # the page; swept at pop via disconnect_all (see below).
         self._mix_signals = []
         self._radio_signals = []
+        # The live Custom-mixes carousel (set in _build_mix_carousel) — held so
+        # the forced-refresh handler can toggle its spinner state.
+        self._mix_carousel = None
         if self.ai_provider != "none" and utils.discovery is not None:
             try:
                 self.ai_mixes = utils.discovery.daily_mixes_cached()
@@ -345,6 +348,47 @@ class HTHomePage(Page):
             child = child.get_next_sibling()
         return None
 
+    def _on_mixes_refresh(self, _carousel):
+        """Force-rebuild the four Custom mixes now (refresh button clicked).
+
+        Bypasses the once-per-day ``mixes_built_date`` stamp via
+        ``daily_mixes(force=True)`` — AI when a provider is configured, else the
+        heuristic fallback (so the button works with no provider). The rebuild
+        runs on a worker thread (NEVER db/network on the main thread); on success
+        the mixes section is swapped in place (which re-creates the carousel with
+        a fresh, non-spinning button). Both callbacks clear the spinner state;
+        on error the previous cached mixes are kept untouched.
+        """
+        if utils.discovery is None or self._mix_carousel is None:
+            return
+        self._mix_carousel.set_refreshing(True)
+        disc = utils.discovery
+
+        def work():
+            return disc.daily_mixes(force=True)
+
+        def done(mixes):
+            # The teardown+rebuild replaces the carousel (and its button), so the
+            # new button starts in the cleared state; nothing else to reset.
+            # All-empty mixes (library emptied since page build) would tear down
+            # the carousel and then early-return in _build_mix_carousel, leaving
+            # a blank section with no refresh affordance — keep the old one.
+            usable = mixes is not None and any(
+                m.get("track_ids") for m in mixes
+            )
+            if usable and self._mixes_box is not None:
+                self.ai_mixes = mixes
+                self._rebuild_mixes_section()
+            elif self._mix_carousel is not None:
+                self._mix_carousel.set_refreshing(False)
+
+        def on_error(_exc):
+            logger.info("Custom mixes force-refresh failed; keeping cached")
+            if self._mix_carousel is not None:
+                self._mix_carousel.set_refreshing(False)
+
+        utils.run_async(work, on_done=done, on_error=on_error, owner=self)
+
     def _rebuild_mixes_section(self):
         # Refresh landed new mixes -> re-resolve their collage album art.
         self.ai_mix_albums = [
@@ -505,7 +549,18 @@ class HTHomePage(Page):
                 ),
             ))
             cards.append(card)
-        parent.append(self._ai_carousel(title, cards))
+        carousel = self._ai_carousel(title, cards)
+        # Custom mixes is the only section with a force-rebuild affordance.
+        # The refresh button emits a signal (no bound page method stored on the
+        # widget); the handler goes in the per-section ``_mix_signals`` scope so
+        # an in-place rebuild and page teardown both disconnect it.
+        carousel.enable_refresh(True)
+        self._mix_carousel = carousel
+        self._mix_signals.append((
+            carousel,
+            carousel.connect("refresh-clicked", self._on_mixes_refresh),
+        ))
+        parent.append(carousel)
 
     def _build_radio_carousel(self, parent, title, radios, artist_radios):
         """Personal-radio collage cards + per-top-artist "X Radio" cards.
