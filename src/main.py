@@ -39,7 +39,11 @@ class TimbreApplication(Adw.Application):
     def __init__(self) -> None:
         super().__init__(
             application_id="io.github.tylerreece.timbre",
-            flags=Gio.ApplicationFlags.DEFAULT_FLAGS,
+            # HANDLES_OPEN: register for jellyfin:// (and Jellyfin web) URIs
+            # passed on the command line / by the desktop scheme handler. The
+            # app is single-instance, so GApplication routes a secondary
+            # invocation's open() to this primary instance's do_open().
+            flags=Gio.ApplicationFlags.HANDLES_OPEN,
         )
         self.create_action("quit", lambda *_: self.quit(), ["<primary>q", "<primary>w"])
         self.create_action("about", self.on_about_action)
@@ -97,6 +101,31 @@ class TimbreApplication(Adw.Application):
         if not self.win:
             self.win = TimbreWindow(application=self)
         self.win.present()
+
+    def do_open(self, files, n_files, hint) -> None:
+        """Handle ``jellyfin://`` (and Jellyfin web) URIs.
+
+        GApplication routes a secondary invocation carrying URIs to the primary
+        instance's ``do_open`` (single-instance app). On a cold start the
+        process is launched BY the URI and ``do_open`` fires without a window —
+        we must ensure one exists and is presented first, then hand the URI to
+        the window, which drains it once it's logged in (see
+        ``TimbreWindow.handle_deep_link``).
+
+        ``files`` are ``Gio.File`` objects; we take their URIs and let the
+        gi-free parser pull the item id out of each. We only act on the last
+        one (a single deep link is the realistic case) but log all of them.
+        """
+        # Ensure a live, presented window exists (cold-start launched by URI).
+        self.do_activate()
+        win = self.props.active_window
+        if win is None:
+            logger.warning("do_open: no window after activate; dropping URIs")
+            return
+        for gfile in files:
+            uri = gfile.get_uri()
+            logger.info("deep link received: %s", uri)
+            win.handle_deep_link(uri)
 
     def do_shutdown(self) -> None:
         """Application teardown (canonical Gtk.Application hook).

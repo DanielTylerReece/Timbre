@@ -476,19 +476,6 @@ class JellyfinClient:
             params["maxStreamingBitrate"] = max_bitrate
         return f"{self.base}/Audio/{track_id}/universal?{urlencode(params)}"
 
-    def image_url(self, item_id, tag, max_width) -> str:
-        # NOTE: this builds an UNAUTHENTICATED image URL (no api_key / token).
-        # It works for servers that allow anonymous image access and is used
-        # for the MPRIS "mpris:artUrl" field, which must be a plain URL a
-        # third-party MPRIS consumer can fetch. On servers that require auth
-        # for images, MPRIS art may not render — that is an accepted tradeoff.
-        # In-app image loading goes through fetch_image_bytes() instead, which
-        # sends the MediaBrowser auth header.
-        params = {"maxWidth": max_width, "quality": 90}
-        if tag:
-            params["tag"] = tag
-        return f"{self.base}/Items/{item_id}/Images/Primary?{urlencode(params)}"
-
     # ------------------------------------------------------------------ #
     # Authenticated image fetch (sends the MediaBrowser auth header).     #
     # ------------------------------------------------------------------ #
@@ -496,9 +483,10 @@ class JellyfinClient:
     def fetch_image_bytes(self, item_id, tag, max_width) -> bytes:
         """Fetch a primary image's bytes WITH the MediaBrowser auth header.
 
-        Unlike ``image_url`` (a pure URL builder used for MPRIS art), this
-        issues an authenticated GET so it works on servers that require auth
-        for image access. Raises ``JellyfinError`` on HTTP error (e.g. 404 no
+        Issues an authenticated GET so it works on servers that require auth
+        for image access (in-app art always goes through this path; MPRIS art
+        uses the on-disk ``file://`` cache populated from these bytes). Raises
+        ``JellyfinError`` on HTTP error (e.g. 404 no
         image) and ``JellyfinNetworkError`` on transport failure.
         """
         params = {"maxWidth": max_width, "quality": 90}

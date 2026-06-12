@@ -29,6 +29,7 @@ from gi.repository import Adw, Gio, GLib, GObject, Gtk
 
 from .lib import PlayerObject, SecretStore, utils
 from .lib.db import Database, default_db_path
+from .lib.deep_link import parse_jellyfin_uri
 from .lib.radio_session import RadioSession
 from .lib.jellyfin.client import JellyfinClient, JellyfinError
 from .lib.jellyfin.sync import LibrarySync
@@ -107,7 +108,11 @@ class TimbreWindow(Adw.ApplicationWindow):
         self._alive = True  # cleared on unrealize; gates run_async callbacks
         self._held = False  # app.hold() balance guard
         self._refreshing = False  # reentrancy guard for on_refresh_home (F5)
+        self._cache_evicted = False  # once-per-session disk-cache eviction guard
         self._radio_session = RadioSession()  # queue-low AI radio extender
+        # Deep link (jellyfin://) received before login completes is stashed
+        # here and drained once the runtime is live (see _enter_logged_in).
+        self._pending_deep_link: str | None = None
 
         # Navigation push actions (Phase 5 — real browse pages).
         self.create_action_with_target(
@@ -125,11 +130,6 @@ class TimbreWindow(Adw.ApplicationWindow):
         self.create_action_with_target(
             "push-track-radio-page", GLib.VariantType.new("s"), self.on_track_radio
         )
-        # Still-stubbed targets (mix/artist-radio; revisited in a later phase).
-        for name in ("push-mix-page", "push-artist-radio-page"):
-            self.create_action_with_target(
-                name, GLib.VariantType.new("s"), self._stub_push
-            )
 
         # Primary-menu Logout. The ported menu item targeted High Tide's
         # never-registered "app.log-out", so GTK rendered it insensitive.
@@ -149,8 +149,9 @@ class TimbreWindow(Adw.ApplicationWindow):
 
         # Transport shortcuts (accels bound in main.py). These delegate to the
         # player pane so the keyboard path matches the button path exactly.
+        # (play-pause has no GAction: Space is handled by the bubble-phase
+        # ShortcutController below, and the play button by its own callback.)
         for name, handler in (
-            ("play-pause", lambda *_a: self.player_pane.on_play_pause(None)),
             ("next-track", lambda *_a: self.player_pane.on_skip_forward(None)),
             ("prev-track", lambda *_a: self.player_pane.on_skip_backward(None)),
         ):
@@ -354,15 +355,66 @@ class TimbreWindow(Adw.ApplicationWindow):
 
         self._show_library_status()
 
+        # Drain any deep link (jellyfin://) that arrived before login finished.
+        # The navigation_view now hosts the real Home page, so pushing on top of
+        # it is safe.
+        if self._pending_deep_link is not None:
+            uri, self._pending_deep_link = self._pending_deep_link, None
+            self.handle_deep_link(uri)
+
         # Background incremental sync of the selected libraries.
         library_ids = list(self.settings.get_strv("selected-libraries"))
         if library_ids:
             utils.run_async(
                 lambda: self._run_incremental_sync(client, library_ids),
-                on_done=lambda _r: self._show_library_status(),
+                on_done=self._on_startup_sync_done,
                 owner=self,
             )
+        else:
+            # No libraries to sync — still run the once-per-session cache
+            # eviction at this quiet startup moment.
+            self._maybe_evict_cache()
         return False
+
+    def _on_startup_sync_done(self, _result):
+        """Startup incremental sync completed — refresh Home, then trim cache.
+
+        The disk image-cache eviction is deferred to here (the first quiet
+        moment after the initial sync) so it never competes with login/sync
+        for I/O, and runs at most once per session.
+        """
+        self._show_library_status()
+        self._maybe_evict_cache()
+
+    def _maybe_evict_cache(self):
+        """Trim the disk image cache to its budget once per app session.
+
+        Idempotent within a session: the ``_cache_evicted`` guard means a
+        later F5 / Collection-button re-sync won't re-run it. Eviction is pure
+        filesystem work, so it runs on a worker thread (NEVER the main thread)
+        via ``utils.run_async``; a nonzero result is logged.
+        """
+        if self._cache_evicted:
+            return
+        self._cache_evicted = True
+
+        img_dir = getattr(utils, "IMG_DIR", None)
+        if img_dir is None:
+            return
+        max_gb = utils.IMAGE_CACHE_MAX_BYTES / 1024 ** 3
+
+        def work():
+            return utils.evict_cache(img_dir, max_gb)
+
+        def done(result):
+            files, freed = result if result else (0, 0)
+            if files:
+                logger.info(
+                    "Disk image cache eviction: removed %d files, freed %d bytes",
+                    files, freed,
+                )
+
+        utils.run_async(work, on_done=done, owner=self)
 
     def _run_incremental_sync(self, client, library_ids):
         sync = LibrarySync(client, self.db)
@@ -418,9 +470,6 @@ class TimbreWindow(Adw.ApplicationWindow):
         page.set_child(tb)
         return page
 
-    def _stub_push(self, action, parameter):
-        logger.debug("stub push: %s", action.get_name())
-
     # ------------------------------------------------------------------ #
     # Browse page push actions (Phase 5)                                 #
     # ------------------------------------------------------------------ #
@@ -445,6 +494,103 @@ class TimbreWindow(Adw.ApplicationWindow):
             return
         from .pages import HTPlaylistPage
         self.navigation_view.push(HTPlaylistPage.new_from_id(item_id).load())
+
+    # ------------------------------------------------------------------ #
+    # Deep links (jellyfin:// scheme handler)                            #
+    # ------------------------------------------------------------------ #
+
+    def handle_deep_link(self, uri):
+        """Resolve a jellyfin:// (or web) URI and navigate to the item.
+
+        Entry point called by the application's ``do_open``. The window is
+        already presented by the caller. Behaviour:
+
+        * Parse the URI to a bare item id (gi-free grammar). Unparseable URIs
+          are logged and dropped — no toast (nothing to act on).
+        * If the runtime isn't ready yet (mid-onboarding / pre-login), stash the
+          URI; ``_enter_logged_in`` drains it once the db/session are live.
+        * Otherwise look the id up in the LOCAL db off the main thread and push
+          the matching page via the existing win.push-*-page actions. A track id
+          resolves to its album page. An unknown id toasts
+          "Item not in your library".
+        """
+        item_id = parse_jellyfin_uri(uri)
+        if not item_id:
+            logger.info("deep link had no resolvable item id: %s", uri)
+            return
+
+        # Runtime not ready (still onboarding / restoring): stash and bail. The
+        # window is already presented by the caller; no crash, just defer.
+        if not self.is_logged_in or self.client is None:
+            logger.info("deep link before login; stashing: %s", uri)
+            self._pending_deep_link = uri
+            return
+
+        def work():
+            return self._classify_deep_link_id(item_id)
+
+        def done(result):
+            self._navigate_deep_link(result)
+
+        utils.run_async(work, on_done=done, owner=self)
+
+    def _classify_deep_link_id(self, item_id):
+        """Resolve an item id to (kind, nav_id) by querying the local db.
+
+        Runs OFF the main thread (called inside run_async work). Returns a
+        ``(kind, nav_id)`` tuple where kind is one of
+        ``"album"/"artist"/"playlist"`` and nav_id is the id to push; a track id
+        resolves to ``("album", <album_id>)``. Returns ``None`` when the id is
+        not present in the local library (or is a track whose album is unknown).
+
+        The id grammar is hex; the db stores packed ids. Match
+        case-insensitively against each table by id.
+        """
+        def query(conn):
+            # Tracks first: a track id resolves to its album page.
+            row = conn.execute(
+                "SELECT album_id FROM tracks WHERE id=? COLLATE NOCASE",
+                (item_id,),
+            ).fetchone()
+            if row is not None:
+                album_id = row["album_id"]
+                return ("album", album_id) if album_id else None
+            if conn.execute(
+                "SELECT 1 FROM albums WHERE id=? COLLATE NOCASE", (item_id,)
+            ).fetchone() is not None:
+                return ("album", item_id)
+            if conn.execute(
+                "SELECT 1 FROM artists WHERE id=? COLLATE NOCASE", (item_id,)
+            ).fetchone() is not None:
+                return ("artist", item_id)
+            if conn.execute(
+                "SELECT 1 FROM playlists WHERE id=? COLLATE NOCASE", (item_id,)
+            ).fetchone() is not None:
+                return ("playlist", item_id)
+            return None
+
+        return self.db.read(query)
+
+    def _navigate_deep_link(self, resolved):
+        """Push the resolved deep-link page (main thread; from run_async).
+
+        ``resolved`` is the ``(kind, nav_id)`` tuple from
+        ``_classify_deep_link_id`` or ``None`` for a not-in-library id. Reuses
+        the existing win.push-*-page actions rather than building pages by hand.
+        """
+        if not resolved:
+            utils.send_toast(_("Item not in your library"), 3)
+            return
+        kind, nav_id = resolved
+        action = {
+            "album": "win.push-album-page",
+            "artist": "win.push-artist-page",
+            "playlist": "win.push-playlist-page",
+        }.get(kind)
+        if action is None or not nav_id:
+            utils.send_toast(_("Item not in your library"), 3)
+            return
+        self.activate_action(action, GLib.Variant("s", nav_id))
 
     # ------------------------------------------------------------------ #
     # Home refresh (F5 / win.refresh-home)                               #

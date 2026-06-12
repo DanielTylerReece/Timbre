@@ -11,15 +11,6 @@
     </key>
 
     <!-- Playback state persistence -->
-    <key name="last-playing-index" type="i">
-      <default>-1</default>
-    </key>
-    <key name="last-playing-thing-id" type="s">
-      <default>''</default>
-    </key>
-    <key name="last-playing-thing-type" type="s">
-      <default>''</default>
-    </key>
     <key name="last-volume" type="i">
       <default>10</default>
     </key>
@@ -87,11 +78,6 @@
     <!-- Library selection -->
     <key name="selected-libraries" type="as">
       <default>[]</default>
-    </key>
-
-    <!-- Mix/playlist date tracking -->
-    <key name="last-mixes-date" type="s">
-      <default>''</default>
     </key>
 
   </schema>

@@ -25,9 +25,8 @@ Concurrency contract
 One ``Database`` object is shared app-wide.
 
 * **Writes** all funnel through a single dedicated writer thread. Call
-  ``write(fn)`` (or ``write_many(fns)``); ``fn(conn)`` runs on the writer
-  thread and its return value is handed back to the caller, which blocks until
-  it completes. Because every mutation is serialized on one connection there
+  ``write(fn)``; ``fn(conn)`` runs on the writer thread and its return value is
+  handed back to the caller, which blocks until it completes. Because every mutation is serialized on one connection there
   are no lost updates and no ``database is locked`` races.
 * **Reads** use per-thread connections (``threading.local``). Call
   ``read(fn)``; ``fn(conn)`` runs on the caller's thread against that thread's
@@ -127,6 +126,69 @@ def _int(val):
     if val is None:
         return 0
     return int(bool(val)) if isinstance(val, bool) else int(val)
+
+
+def _parse_iso(val):
+    """Parse an ISO-8601 timestamp to an aware UTC ``datetime`` (None-safe).
+
+    Returns ``None`` if ``val`` is falsy or unparseable. Handles the two shapes
+    last_played actually appears in:
+
+    * Server ``UserData.LastPlayedDate`` — e.g. ``2026-06-12T03:09:38.8658225Z``
+      (trailing ``Z``, up to 7 fractional digits — more than ``%f``/``fromisoformat``
+      accept on older pythons).
+    * Local ``record_play`` timestamps from :func:`_now_iso` — e.g.
+      ``2026-06-12T22:58:22.380636+00:00`` (explicit ``+00:00`` offset).
+
+    These two forms do NOT sort lexically (``Z`` vs ``+`` differ in byte order
+    and fractional-digit counts differ), so last_played must be merged by
+    comparing parsed instants, not by string ``MAX``.
+    """
+    if not val:
+        return None
+    s = str(val).strip()
+    # Normalise trailing Z to +00:00 so fromisoformat accepts it.
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    # Clamp over-long fractional seconds (Jellyfin sends 7 digits; Python's
+    # fromisoformat accepts at most 6) before the offset.
+    plus = max(s.rfind("+"), s.rfind("-", 11))  # skip the date hyphens
+    tz = ""
+    if plus > 0:
+        tz = s[plus:]
+        s = s[:plus]
+    if "." in s:
+        head, frac = s.split(".", 1)
+        frac = frac[:6]
+        s = f"{head}.{frac}"
+    try:
+        dt = datetime.fromisoformat(s + tz)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _merge_last_played(existing, incoming):
+    """Return the later of two last_played values (None-safe instant compare).
+
+    The local and server formats are not lexically comparable (see
+    :func:`_parse_iso`), so the merge parses both to UTC instants and keeps the
+    later one. If both parse, the *original string* of the later instant is
+    returned unchanged (so we never rewrite a value into a different textual
+    form). If only one parses, that one wins; if neither does, ``incoming``
+    falls back to ``existing`` (never regress to NULL).
+    """
+    e_dt = _parse_iso(existing)
+    i_dt = _parse_iso(incoming)
+    if e_dt is None and i_dt is None:
+        return existing
+    if e_dt is None:
+        return incoming
+    if i_dt is None:
+        return existing
+    return incoming if i_dt >= e_dt else existing
 
 
 def _dicts(rows):
@@ -243,18 +305,6 @@ class Database:
             raise future["error"]
         return future["result"]
 
-    def write_many(self, fns):
-        """Run several ``fn(conn)`` callables as one transaction on the writer.
-
-        Returns the list of their results. Any exception rolls the whole batch
-        back.
-        """
-
-        def _batch(conn):
-            return [fn(conn) for fn in fns]
-
-        return self.write(_batch)
-
     def read(self, fn):
         """Run ``fn(conn)`` against the calling thread's read connection."""
         return fn(self._read_conn)
@@ -360,21 +410,62 @@ class Database:
         return self.write(fn)
 
     def upsert_albums(self, albums):
+        """Upsert albums.
+
+        ``play_count`` / ``last_played`` come from Jellyfin ``UserData`` (the
+        models parse ``PlayCount`` / ``LastPlayedDate``). They are MERGED, never
+        blindly overwritten:
+
+        * ``play_count`` → ``MAX(play_count, excluded.play_count)`` so a server
+          value can only ever raise the local count. Timbre also records its own
+          plays locally (``record_play``) and reports them to the server; until
+          the server's PlayCount catches up the local value may be higher, so a
+          blind ``excluded.play_count`` overwrite could REGRESS it. MAX keeps the
+          count monotonic, and since both sides converge to the same N (MAX, not
+          sum) there is no double-counting.
+        * ``last_played`` → :func:`_merge_last_played` (Python instant compare —
+          the server ``…Z`` and local ``…+00:00`` ISO forms are NOT lexically
+          comparable). Pre-resolved per row below so the SQL just writes the
+          winner.
+
+        On a fresh INSERT both land immediately (an existing server library
+        syncs its real counts/dates on the first sync).
+        """
+
         def fn(conn):
             for a in albums:
+                aid = _g(a, "id")
+                incoming_lp = _g(a, "last_played")
+                # Resolve the last_played winner up front: the existing row's
+                # value (if any) vs the incoming server value, compared as UTC
+                # instants. New rows have no existing value -> incoming wins.
+                merged_lp = incoming_lp
+                if aid is not None:
+                    prev = conn.execute(
+                        "SELECT last_played FROM albums WHERE id=?", (aid,)
+                    ).fetchone()
+                    if prev is not None:
+                        merged_lp = _merge_last_played(
+                            prev["last_played"], incoming_lp
+                        )
                 conn.execute(
                     "INSERT INTO albums(id, name, sort_name, album_artist_id, "
                     "album_artist_name, year, date_created, image_tag, is_favorite, "
-                    "library_id) VALUES(?,?,?,?,?,?,?,?,?,?) "
+                    "play_count, last_played, library_id) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT(id) DO UPDATE SET name=excluded.name, "
                     "sort_name=excluded.sort_name, "
                     "album_artist_id=excluded.album_artist_id, "
                     "album_artist_name=excluded.album_artist_name, "
                     "year=excluded.year, date_created=excluded.date_created, "
                     "image_tag=excluded.image_tag, is_favorite=excluded.is_favorite, "
+                    # MAX so server plays raise but never lower the local count.
+                    "play_count=MAX(play_count, excluded.play_count), "
+                    # Winner pre-resolved in Python (formats aren't lexical).
+                    "last_played=excluded.last_played, "
                     "library_id=excluded.library_id",
                     (
-                        _g(a, "id"),
+                        aid,
                         _g(a, "name"),
                         _g(a, "sort_name"),
                         _g(a, "album_artist_id"),
@@ -383,6 +474,8 @@ class Database:
                         _g(a, "date_created"),
                         _g(a, "image_tag"),
                         _int(_g(a, "is_favorite")),
+                        _int(_g(a, "play_count")),
+                        merged_lp,
                         _g(a, "library_id"),
                     ),
                 )
@@ -401,11 +494,26 @@ class Database:
             for t in tracks:
                 genres = _g(t, "genres")
                 genres_json = json.dumps(genres) if genres else None
+                tid_pk = _g(t, "id")
+                incoming_lp = _g(t, "last_played")
+                # last_played winner pre-resolved (see upsert_albums): server
+                # …Z and local …+00:00 forms aren't lexically comparable, so the
+                # merge happens in Python, not in SQL. New rows -> incoming wins.
+                merged_lp = incoming_lp
+                if tid_pk is not None:
+                    prev = conn.execute(
+                        "SELECT last_played FROM tracks WHERE id=?", (tid_pk,)
+                    ).fetchone()
+                    if prev is not None:
+                        merged_lp = _merge_last_played(
+                            prev["last_played"], incoming_lp
+                        )
                 conn.execute(
                     "INSERT INTO tracks(id, name, album_id, album_name, artist_id, "
                     "artist_name, duration_ticks, index_number, parent_index_number, "
-                    "year, genres, bitrate, codec, is_favorite, date_created, "
-                    "library_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    "year, genres, bitrate, codec, is_favorite, play_count, "
+                    "last_played, date_created, library_id) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT(id) DO UPDATE SET name=excluded.name, "
                     "album_id=excluded.album_id, album_name=excluded.album_name, "
                     "artist_id=excluded.artist_id, artist_name=excluded.artist_name, "
@@ -415,10 +523,16 @@ class Database:
                     "year=excluded.year, genres=excluded.genres, "
                     "bitrate=excluded.bitrate, codec=excluded.codec, "
                     "is_favorite=excluded.is_favorite, "
+                    # MAX so a server PlayCount can raise but never lower the
+                    # local count (Timbre's own record_play may be ahead of the
+                    # server until its playback report lands). No double-count:
+                    # MAX converges, it does not sum.
+                    "play_count=MAX(play_count, excluded.play_count), "
+                    "last_played=excluded.last_played, "
                     "date_created=excluded.date_created, "
                     "library_id=excluded.library_id",
                     (
-                        _g(t, "id"),
+                        tid_pk,
                         _g(t, "name"),
                         _g(t, "album_id"),
                         _g(t, "album_name"),
@@ -432,6 +546,8 @@ class Database:
                         _g(t, "bitrate"),
                         _g(t, "codec"),
                         _int(_g(t, "is_favorite")),
+                        _int(_g(t, "play_count")),
+                        merged_lp,
                         _g(t, "date_created"),
                         _g(t, "library_id"),
                     ),

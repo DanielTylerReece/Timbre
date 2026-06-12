@@ -25,7 +25,6 @@ import os
 import re
 import subprocess
 import threading
-import uuid
 import logging
 
 from gettext import gettext as _
@@ -33,8 +32,6 @@ from pathlib import Path
 from typing import Any, Callable, List, Optional
 
 from gi.repository import Gdk, Gio, GLib
-
-from .cache import HTCache
 
 logger = logging.getLogger(__name__)
 
@@ -119,10 +116,15 @@ def run_async(
         except BaseException as exc:  # noqa: BLE001 — log + route to on_error
             logger.exception("run_async work failed")
             if on_error is not None:
+                # Bind to a plain local: Python DELETES the `except ... as exc`
+                # name when the except block exits, so a deferred (idle_add)
+                # _deliver_err closing over `exc` raises NameError instead of
+                # delivering — which silently broke every on_error toast.
+                err = exc
 
                 def _deliver_err():
                     if _owner_alive(owner) and on_error is not None:
-                        on_error(exc)
+                        on_error(err)
                     return False
 
                 scheduler(_deliver_err)
@@ -155,10 +157,10 @@ user_playlists: List[Any] = []
 
 
 def init() -> None:
-    """Initialize the utils module by setting up cache directories and global objects.
+    """Initialize the utils module by setting up cache directories and globals.
 
-    Sets up the cache directory structure, creates necessary directories,
-    and initializes the global cache object for Jellyfin API responses.
+    Sets up the cache directory structure (CACHE_DIR / IMG_DIR / MUSIC_DIR),
+    creates the directories, and resets the shared app-wide runtime globals.
     """
     global CACHE_DIR
     base_cache = os.environ.get("XDG_CACHE_HOME")
@@ -178,13 +180,11 @@ def init() -> None:
     global navigation_view
     global player_object
     global toast_overlay
-    global cache
     global client
     global db
     global settings
     global discovery
     session = None
-    cache = HTCache()
     client = None
     db = None
     settings = None
@@ -342,89 +342,11 @@ def get_alsa_devices_from_proc() -> List[dict]:
     return devices
 
 
-def get_artist(artist_id: str) -> Any:
-    global cache
-    return cache.get_artist(artist_id)
-
-
-def get_album(album_id: str) -> Any:
-    global cache
-    return cache.get_album(album_id)
-
-
-def get_track(track_id: str) -> Any:
-    global cache
-    return cache.get_track(track_id)
-
-
-def get_playlist(playlist_id: str) -> Any:
-    global cache
-    return cache.get_playlist(playlist_id)
-
-
-def get_mix(mix_id: str) -> Any:
-    global cache
-    return cache.get_mix(mix_id)
-
-
-def get_favourites() -> None:
-    """Phase 0 stub — Jellyfin favorites fetching implemented in Phase 1."""
-    pass
-
-
-def is_favourited(item: Any) -> bool:
-    """Phase 0 stub — always returns False until Jellyfin layer is connected."""
-    return False
-
-
 def send_toast(toast_title: str, timeout: int) -> None:
     """Display a toast notification. Phase 0: requires toast_overlay to be set."""
     if toast_overlay:
         from gi.repository import Adw
         toast_overlay.add_toast(Adw.Toast(title=toast_title, timeout=timeout))
-
-
-def th_add_to_my_collection(btn: Any, item: Any) -> None:
-    """Phase 0 stub — Jellyfin collection add implemented in Phase 1."""
-    pass
-
-
-def th_remove_from_my_collection(btn: Any, item: Any) -> None:
-    """Phase 0 stub — Jellyfin collection remove implemented in Phase 1."""
-    pass
-
-
-def on_in_to_my_collection_button_clicked(btn: Any, item: Any) -> None:
-    """Phase 0 stub — no-op until Jellyfin layer is connected."""
-    pass
-
-
-def share_this(item: Any) -> None:
-    """Phase 0 stub — share URL support implemented in Phase 1."""
-    pass
-
-
-def get_type(item: Any) -> str:
-    """Return type string for an item (uses hasattr duck-typing)."""
-    if hasattr(item, '_type'):
-        return item._type
-    return "unknown"
-
-
-def open_uri(label: str, uri: str) -> bool:
-    """Phase 0 stub — URI navigation implemented in Phase 1."""
-    logger.debug(f"open_uri stub: {uri}")
-    return True
-
-
-def open_jellyfin_uri(uri: str) -> None:
-    """Phase 0 stub — Jellyfin URI handling implemented in Phase 1."""
-    logger.debug(f"open_jellyfin_uri stub: {uri}")
-
-
-def th_play_track(track_id: str) -> None:
-    """Phase 0 stub — playback implemented in Phase 1."""
-    pass
 
 
 def pretty_duration(secs: int | None) -> str:
@@ -447,27 +369,6 @@ def pretty_duration(secs: int | None) -> str:
         return f"{int(hours)}:{int(minutes):02}:{int(seconds):02}"
     else:
         return f"{int(minutes):02}:{int(seconds):02}"
-
-
-def get_best_dimensions(widget: Any) -> int:
-    """Determine the best image dimensions for a widget.
-
-    Args:
-        widget: A GTK widget to measure
-
-    Returns:
-        int: The best image dimension from available sizes (80, 160, 320, 640, 1280)
-    """
-    edge = widget.get_height()
-    dimensions = [80, 160, 320, 640, 1280]
-    # The function for fractional scaling is not available in GTKWidget
-    scale = 1.0
-    native = widget.get_native()
-    if native:
-        surface = native.get_surface()
-        if surface:
-            scale = surface.get_scale()
-    return next((x for x in dimensions if x > (edge * scale)), dimensions[-1])
 
 
 def image_cache_path(item_id: str, dimensions: int) -> "Path":
@@ -578,19 +479,6 @@ def add_picture_from_tag(
     GLib.idle_add(_apply)
 
 
-def add_image(widget: Any, item: Any, cancellable: Any = None) -> None:
-    """Back-compat shim for Phase 5+ widgets that still call ``add_image``.
-
-    The new image path is tag-based (``add_image_from_tag``). This shim adapts
-    an item exposing ``id`` + ``image_tag`` to it; items without those are a
-    no-op (the widget keeps its placeholder icon).
-    """
-    item_id = getattr(item, "id", None)
-    image_tag = getattr(item, "image_tag", None)
-    if item_id:
-        add_image_from_tag(widget, item_id, image_tag, cancellable=cancellable)
-
-
 def add_avatar_from_tag(
     widget: Any,
     item_id: str,
@@ -608,23 +496,6 @@ def add_avatar_from_tag(
     def _apply():
         if cancellable is not None and cancellable.is_cancelled():
             return False
-        if path:
-            file = Gio.File.new_for_path(path)
-            widget.set_custom_image(Gdk.Texture.new_from_file(file))
-        return False
-
-    GLib.idle_add(_apply)
-
-
-def add_image_to_avatar(widget: Any, item: Any, cancellable: Any = None) -> None:
-    """Back-compat shim: set an Adw.Avatar's custom image from an item tag."""
-    item_id = getattr(item, "id", None)
-    image_tag = getattr(item, "image_tag", None)
-    if not item_id:
-        return
-    path = fetch_image_to_path(item_id, image_tag)
-
-    def _apply():
         if path:
             file = Gio.File.new_for_path(path)
             widget.set_custom_image(Gdk.Texture.new_from_file(file))
@@ -757,11 +628,6 @@ def create_playlist_with_track(name, track_id, owner=None):
     run_async(work, on_done=on_done, on_error=on_error, owner=owner)
 
 
-def create_jellyfin_session():
-    """Phase 0 stub — returns None.  Jellyfin session object created in Phase 1."""
-    return None
-
-
 def setup_logging():
     log_to_file = os.getenv("LOG_TO_FILE")
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -787,13 +653,25 @@ def setup_logging():
         handlers=handlers,
     )
 
+# Default disk image-cache budget. 512 MiB is a generous cap for album art
+# (320/640px JPEGs); the LRU evictor below trims back to it. Kept as a module
+# constant rather than a GSetting to stay simple — could become a preference
+# later if users want to tune cache size.
+IMAGE_CACHE_MAX_BYTES = 512 * 1024 ** 2
+
+
 def evict_cache(cache_dir, max_gb):
-    # NOTE(post-1.0): LRU disk-cache eviction. Implemented + correct, but not yet
-    # wired to a caller — there's no cache-size GSetting and no eviction policy
-    # decision (when to run, which dirs, default budget) for 1.0. Wiring it is a
-    # post-1.0 task so a release doesn't ship an untuned background file-deleter.
+    """LRU-evict files in ``cache_dir`` until under ``max_gb`` GiB.
+
+    Flat (non-recursive) over ``cache_dir.iterdir()``, sorted by access time
+    (``st_atime``), unlinking least-recently-used files first until the total
+    size is within budget. Pure filesystem work — call it OFF the main thread.
+
+    Returns ``(files_evicted, bytes_evicted)`` so callers can log a summary; a
+    no-op (missing dir or already under budget) returns ``(0, 0)``.
+    """
     if not cache_dir or not cache_dir.exists():
-        return
+        return (0, 0)
 
     max_bytes = max_gb * 1024 ** 3
     files = sorted(
@@ -801,9 +679,15 @@ def evict_cache(cache_dir, max_gb):
         key=lambda f: f.stat().st_atime
     )
     total = sum(f.stat().st_size for f in files)
+    files_evicted = 0
+    bytes_evicted = 0
     for f in files:
         if total <= max_bytes:
             break
-        total -= f.stat().st_size
+        size = f.stat().st_size
+        total -= size
         f.unlink()
-        logger.info(f"Evicted from cache: {f.name}")
+        files_evicted += 1
+        bytes_evicted += size
+        logger.debug("Evicted from cache: %s", f.name)
+    return (files_evicted, bytes_evicted)

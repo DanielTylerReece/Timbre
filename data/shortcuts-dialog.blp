@@ -7,7 +7,11 @@ Adw.ShortcutsDialog shortcuts_dialog {
 
     Adw.ShortcutsItem {
       title: C_("shortcut window", "Play / Pause");
-      action-name: 'win.play-pause';
+      // Space is handled by a bubble-phase ShortcutController on the window
+      // (see window.py), NOT a global accel, so it doesn't steal Space from
+      // search entries. The action therefore has no registered accelerator;
+      // bind the display string explicitly so the dialog still shows "Space".
+      accelerator: "space";
     }
 
     Adw.ShortcutsItem {
