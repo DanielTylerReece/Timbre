@@ -43,8 +43,9 @@ class SearchDebouncer:
             on_fire: ``callable(query)`` invoked once per quiet period.
             min_chars: minimum non-whitespace length to fire (else cancel).
             delay: debounce delay passed to the scheduler (ms).
-            schedule: ``callable(fn, delay) -> handle`` (e.g.
-                ``GLib.timeout_add``); defaults raise if scheduling is needed.
+            schedule: ``callable(delay, fn) -> handle`` — argument order
+                matches ``GLib.timeout_add(interval, function)``, which the
+                Explore page injects directly.
             cancel: ``callable(handle)`` (e.g. ``GLib.source_remove``).
         """
         self._on_fire = on_fire
@@ -60,7 +61,9 @@ class SearchDebouncer:
         text = (query or "").strip()
         if len(text) < self._min_chars:
             return
-        self._handle = self._schedule(lambda: self._fire(text), self._delay)
+        # GLib.timeout_add order: interval FIRST, then callback. Swapping these
+        # raises "TypeError: Must be number, not function" on every keystroke.
+        self._handle = self._schedule(self._delay, lambda: self._fire(text))
 
     def cancel(self):
         """Drop any pending fire (owner teardown / dialog close)."""
