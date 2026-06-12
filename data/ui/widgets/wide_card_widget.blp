@@ -1,0 +1,57 @@
+using Gtk 4.0;
+
+template $HTWideCardWidget: Box {
+  styles [
+    "card-bg",
+    "activatable",
+  ]
+
+  hexpand: true;
+  height-request: 64;
+  margin-bottom: 3;
+  margin-end: 3;
+  margin-start: 3;
+  margin-top: 3;
+  spacing: 10;
+
+  GestureClick click_gesture {}
+
+  Image image {
+    halign: start;
+    icon-name: 'emblem-music-symbolic';
+    pixel-size: 56;
+    valign: center;
+    overflow: hidden;
+
+    styles [
+      "card-image",
+    ]
+  }
+
+  Box {
+    orientation: vertical;
+    hexpand: true;
+    valign: center;
+
+    Label title_label {
+      styles [
+        "title-4",
+      ]
+
+      ellipsize: end;
+      xalign: 0;
+      max-width-chars: 24;
+    }
+
+    Label detail_label {
+      styles [
+        "caption",
+        "dim-label",
+      ]
+
+      ellipsize: end;
+      xalign: 0;
+      max-width-chars: 24;
+    }
+  }
+}

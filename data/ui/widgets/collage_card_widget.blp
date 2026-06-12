@@ -1,0 +1,120 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $HTCollageCardWidget: Box {
+  styles [
+    "card-bg",
+    "activatable",
+  ]
+
+  hexpand: false;
+  width-request: 167;
+  margin-bottom: 3;
+  margin-end: 3;
+  margin-start: 3;
+  margin-top: 3;
+  orientation: vertical;
+  spacing: 3;
+  valign: center;
+
+  GestureClick click_gesture {}
+
+  // Square art area: a 2x2 grid of album covers clipped to the rounded
+  // card-image style. Hidden (revealed in code) when the item has covers;
+  // when the item has no album art the grid stays hidden and only the
+  // labels show (text-only fallback).
+  // Clamp caps the natural width at 160 (large cover textures otherwise
+  // inflate the natural size — width-request is only a minimum), and the
+  // AspectFrame with obey-child:false forces the allocation to stay 1:1.
+  Adw.Clamp {
+    maximum-size: 160;
+    tightening-threshold: 160;
+
+    AspectFrame collage_frame {
+    ratio: 1.0;
+    obey-child: false;
+    halign: center;
+    valign: center;
+    width-request: 160;
+    height-request: 160;
+    overflow: hidden;
+    visible: false;
+
+    styles [
+      "card-image",
+    ]
+
+    child: Grid collage_grid {
+      hexpand: true;
+      vexpand: true;
+      column-homogeneous: true;
+      row-homogeneous: true;
+
+      Picture cell_0 {
+        width-request: 80;
+        height-request: 80;
+        content-fit: cover;
+        layout {
+          column: 0;
+          row: 0;
+        }
+      }
+
+      Picture cell_1 {
+        width-request: 80;
+        height-request: 80;
+        content-fit: cover;
+        layout {
+          column: 1;
+          row: 0;
+        }
+      }
+
+      Picture cell_2 {
+        width-request: 80;
+        height-request: 80;
+        content-fit: cover;
+        layout {
+          column: 0;
+          row: 1;
+        }
+      }
+
+      Picture cell_3 {
+        width-request: 80;
+        height-request: 80;
+        content-fit: cover;
+        layout {
+          column: 1;
+          row: 1;
+        }
+      }
+    };
+    }
+  }
+
+  Label title_label {
+    styles [
+      "title-4",
+    ]
+
+    // max-width-chars caps the NATURAL width (ellipsize alone doesn't), so
+    // long mix/radio names can't widen the card past its collage square —
+    // same constraint the album card_widget labels use.
+    ellipsize: end;
+    max-width-chars: 15;
+    halign: center;
+  }
+
+  Label subtitle_label {
+    styles [
+      "caption",
+      "dim-label",
+    ]
+
+    ellipsize: end;
+    max-width-chars: 22;
+    halign: center;
+    margin-bottom: 6;
+  }
+}

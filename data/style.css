@@ -1,0 +1,207 @@
+.rounded {
+  border-radius: 20px;
+}
+
+.small-pill {
+  border-radius: 60px;
+}
+
+.card-image {
+  border-radius: 10px;
+}
+
+/* Artist cards: slightly rounded square portraits (per design mockups). */
+.rounded-image {
+  border-radius: 12px;
+}
+
+.small-image {
+  border-radius: 4px;
+}
+
+.card-bg {
+  transition: opacity 0.1s ease-in-out;
+  transition: background-color 0.1s ease-in-out;
+  border-radius: 14px;
+}
+
+.card-bg:hover {
+  background-color: alpha(var(--window-fg-color), 0.1);
+}
+
+.artist-link {
+  color: #888;
+}
+
+.link-text {
+  color: #888;
+  text-decoration: underline;
+  transition: color 0.3s ease-in-out;
+  background-color: transparent;
+  font-weight: normal;
+}
+
+.link-text:hover {
+  color: #444;
+}
+
+.card-label {
+  padding: 6px;
+}
+
+.artist-button {
+  padding: 0px;
+}
+
+.play-btn {
+  padding-left: 18px;
+  padding-right: 18px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.artist-picture {
+  border-radius: 100px;
+}
+
+.track-picture {
+  border-radius: 12px;
+}
+
+.explicit-label {
+  padding: 0px;
+  padding-left: 3px;
+  padding-right: 3px;
+  background-color: var(--popover-shade-color);
+  border-radius: 4px;
+}
+
+/* Explore page: large rounded genre/decade buttons (2-per-row grid). */
+.explore-big-button {
+  border-radius: 14px;
+  min-height: 64px;
+}
+
+.lyrics-widget {
+  background-color: transparent;
+}
+
+.lyrics-widget>row {
+  background-color: transparent;
+  padding: 0px;
+}
+
+.lyrics-widget>row label {
+  transition: background-color 0.1s ease-in-out;
+  font-weight: bold;
+  font-size: 14pt;
+  color: alpha(var(--view-fg-color), 0.5);
+  border-radius: 12px;
+  padding: 6px;
+}
+
+.lyrics-widget>row label:hover {
+  background-color: alpha(var(--view-fg-color), 0.04);
+}
+
+.lyrics-widget>row:selected label {
+  background-color: alpha(var(--view-fg-color), 0.07);
+  color: var(--accent-color);
+  padding-top: 24px;
+  padding-bottom: 24px;
+}
+
+.lyrics-widget>row:selected:hover {
+  color: alpha(var(--accent-color), 0.9);
+}
+
+.tracks-list-box {
+  border-radius: 12px;
+  background-color: transparent;
+}
+
+.tracks-list-box row {
+  border-radius: 12px;
+  background-color: transparent;
+  transition: background-color 0.1s ease-in-out;
+}
+
+.tracks-list-box row:nth-child(odd) {
+  background-color: alpha(var(--window-fg-color), 0.05);
+}
+
+.tracks-list-box row:hover {
+  background-color: alpha(var(--window-fg-color), 0.1);
+}
+
+.quality-label {
+  background-color: var(--popover-shade-color);
+  border-radius: 4px;
+  padding: 3px;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.sidebar-progress-bar trough { /* codespell:ignore trough */
+  border-radius:0px;
+  background-color: transparent;
+}
+
+.sidebar-progress-bar trough > progress { /* codespell:ignore trough */
+  border-radius:0px;
+  background-color:alpha(var(--window-fg-color), 0.05);
+}
+
+dropdown button:not(:hover) {
+  background-color: transparent;
+}
+.queue-current {
+  background-color: alpha(var(--accent-bg-color), 0.12);
+  border-radius: 6px;
+}
+
+.queue-current label.title-4 {
+  color: var(--accent-color);
+}
+
+/* Drag-to-reorder feedback for queue rows */
+.queue-dragging {
+  opacity: 0.4;
+}
+
+.queue-drop-into {
+  background-color: alpha(var(--accent-bg-color), 0.20);
+  border-radius: 6px;
+  box-shadow: inset 0 2px 0 0 var(--accent-bg-color);
+}
+
+/* Per-row remove button: only visible on row hover (kept subtle otherwise) */
+.queue-remove {
+  opacity: 0;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+}
+
+row:hover .queue-remove,
+.queue-remove:hover,
+.queue-remove:focus {
+  opacity: 1;
+}
+
+/* Drag handle stays subtle until the row is hovered */
+.queue-row-handle {
+  opacity: 0.35;
+  transition: opacity 0.1s ease-in-out;
+}
+
+row:hover .queue-row-handle {
+  opacity: 1;
+}
+
+/* Lyrics synced/static badge */
+.lyrics-sync-indicator {
+  background-color: alpha(var(--window-fg-color), 0.08);
+  border-radius: 12px;
+  padding: 2px 10px;
+}

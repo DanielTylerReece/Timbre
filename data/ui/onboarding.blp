@@ -1,0 +1,368 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $JTOnboarding: Adw.Dialog {
+  content-width: 480;
+  content-height: 560;
+  title: _("Welcome to Timbre");
+
+  child: Adw.NavigationView nav_view {
+    // ---- Server step ----
+    Adw.NavigationPage {
+      title: _("Server");
+      tag: "server";
+      can-pop: false;
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: Adw.StatusPage {
+          icon-name: "network-server-symbolic";
+          title: _("Connect to Jellyfin");
+          description: _("Enter the address of your Jellyfin server.");
+
+          child: Box {
+            orientation: vertical;
+            spacing: 12;
+            halign: center;
+
+            Adw.Banner server_banner {
+              revealed: false;
+              title: _("Could not reach that server.");
+            }
+
+            Adw.PreferencesGroup {
+              width-request: 320;
+
+              Adw.EntryRow server_url_row {
+                title: _("Server URL");
+                entry-activated => $on_server_connect();
+              }
+            }
+
+            Button server_connect_button {
+              label: _("Connect");
+              halign: center;
+
+              styles [
+                "pill",
+                "suggested-action",
+              ]
+
+              clicked => $on_server_connect();
+            }
+
+            Adw.Spinner server_spinner {
+              visible: false;
+              halign: center;
+            }
+          };
+        };
+      };
+    }
+
+    // ---- Quick Connect auth step ----
+    Adw.NavigationPage {
+      title: _("Quick Connect");
+      tag: "quick-connect";
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: Adw.StatusPage {
+          icon-name: "key-login-symbolic";
+          title: _("Quick Connect");
+          description: _("Enter this code in your Jellyfin dashboard under Quick Connect.");
+
+          child: Box {
+            orientation: vertical;
+            spacing: 18;
+            halign: center;
+
+            Label quick_connect_code {
+              label: "------";
+              selectable: true;
+
+              styles [
+                "title-1",
+              ]
+            }
+
+            LinkButton quick_connect_web_link {
+              label: _("Open Quick Connect in your browser");
+              halign: center;
+              uri: "";
+            }
+
+            Adw.Banner quick_connect_expired_banner {
+              revealed: false;
+              title: _("Code expired — get a new code.");
+              button-label: _("New code");
+              button-clicked => $on_quick_connect_new_code();
+            }
+
+            LinkButton use_password_button {
+              label: _("Use password instead");
+              halign: center;
+              uri: "";
+              activate-link => $on_use_password();
+            }
+          };
+        };
+      };
+    }
+
+    // ---- Password auth step ----
+    Adw.NavigationPage {
+      title: _("Sign in");
+      tag: "password";
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: Adw.StatusPage {
+          icon-name: "avatar-default-symbolic";
+          title: _("Sign in");
+
+          child: Box {
+            orientation: vertical;
+            spacing: 12;
+            halign: center;
+
+            Adw.Banner password_banner {
+              revealed: false;
+              title: _("Sign in failed.");
+            }
+
+            Adw.PreferencesGroup {
+              width-request: 320;
+
+              Adw.EntryRow username_row {
+                title: _("Username");
+              }
+
+              Adw.PasswordEntryRow password_row {
+                title: _("Password");
+                entry-activated => $on_password_signin();
+              }
+            }
+
+            Button password_signin_button {
+              label: _("Sign in");
+              halign: center;
+
+              styles [
+                "pill",
+                "suggested-action",
+              ]
+
+              clicked => $on_password_signin();
+            }
+
+            Adw.Spinner password_spinner {
+              visible: false;
+              halign: center;
+            }
+          };
+        };
+      };
+    }
+
+    // ---- Libraries step ----
+    Adw.NavigationPage {
+      title: _("Libraries");
+      tag: "libraries";
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: ScrolledWindow {
+          Adw.Clamp {
+            margin-top: 12;
+            margin-bottom: 12;
+            margin-start: 12;
+            margin-end: 12;
+
+            Box {
+              orientation: vertical;
+              spacing: 12;
+
+              Adw.Banner libraries_banner {
+                revealed: false;
+                title: _("Couldn't load your libraries.");
+                button-label: _("Retry");
+                button-clicked => $on_libraries_retry();
+              }
+
+              Adw.StatusPage libraries_empty {
+                visible: false;
+                icon-name: "folder-music-symbolic";
+                title: _("No music libraries found");
+                description: _("This server has no music libraries to sync.");
+                vexpand: true;
+
+                child: Button libraries_back_button {
+                  label: _("Back");
+                  halign: center;
+
+                  styles [
+                    "pill",
+                  ]
+
+                  clicked => $on_libraries_back();
+                };
+              }
+
+              Adw.PreferencesGroup libraries_group {
+                title: _("Music Libraries");
+                description: _("Choose which libraries to sync.");
+              }
+
+              Button libraries_continue_button {
+                label: _("Continue");
+                halign: center;
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+
+                clicked => $on_libraries_continue();
+              }
+            }
+          }
+        };
+      };
+    }
+
+    // ---- AI step ----
+    Adw.NavigationPage {
+      title: _("AI Discovery");
+      tag: "ai";
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {}
+
+        content: ScrolledWindow {
+          Adw.Clamp {
+            margin-top: 12;
+            margin-bottom: 12;
+            margin-start: 12;
+            margin-end: 12;
+
+            Box {
+              orientation: vertical;
+              spacing: 12;
+
+              Adw.PreferencesGroup {
+                title: _("AI Discovery (optional)");
+                description: _("If skipped, discovery will use Jellyfin instant mix only.");
+
+                Adw.ComboRow ai_provider_row {
+                  title: _("Provider");
+
+                  model: StringList {
+                    strings [
+                      _("None"),
+                      _("OpenAI-compatible"),
+                      _("Anthropic"),
+                    ]
+                  };
+                }
+
+                Adw.EntryRow ai_endpoint_row {
+                  title: _("Endpoint");
+                }
+
+                Adw.ComboRow ai_model_combo {
+                  title: _("Model");
+                  visible: false;
+                }
+
+                Adw.EntryRow ai_model_row {
+                  title: _("Custom model");
+                  visible: false;
+                }
+
+                Adw.PasswordEntryRow ai_key_row {
+                  title: _("API Key");
+                }
+              }
+
+              Box {
+                spacing: 12;
+                halign: center;
+
+                Button ai_skip_button {
+                  label: _("Skip");
+
+                  styles [
+                    "pill",
+                  ]
+
+                  clicked => $on_ai_skip();
+                }
+
+                Button ai_continue_button {
+                  label: _("Continue");
+
+                  styles [
+                    "pill",
+                    "suggested-action",
+                  ]
+
+                  clicked => $on_ai_continue();
+                }
+              }
+            }
+          }
+        };
+      };
+    }
+
+    // ---- Initial sync step ----
+    Adw.NavigationPage {
+      title: _("Syncing");
+      tag: "sync";
+      can-pop: false;
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {
+          show-back-button: false;
+        }
+
+        content: Adw.StatusPage {
+          icon-name: "emblem-synchronizing-symbolic";
+          title: _("Building your library");
+          description: _("This can take a moment for large libraries.");
+
+          child: Box {
+            orientation: vertical;
+            spacing: 12;
+            halign: center;
+
+            ProgressBar sync_progress {
+              width-request: 320;
+              fraction: 0.0;
+              pulse-step: 0.1;
+            }
+
+            Label sync_status {
+              label: _("Starting sync…");
+
+              styles [
+                "dim-label",
+              ]
+            }
+          };
+        };
+      };
+    }
+  };
+}

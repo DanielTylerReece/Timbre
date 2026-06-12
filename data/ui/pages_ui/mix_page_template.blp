@@ -1,0 +1,310 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Mix detail header: a clone of tracks_list_template's MultiLayoutView header,
+// but the single album Image slot is replaced by the PROVEN 1:1 2x2 collage
+// (Clamp > AspectFrame obey-child:false > homogeneous Grid of 80px cover
+// Pictures — same structure as collage_card_widget.blp / the home cards). The
+// favorite button is dropped (AI mixes aren't a Jellyfin favoritable entity);
+// Play / Shuffle / Share remain.
+Box _main {
+  orientation: vertical;
+
+  Adw.BreakpointBin _bin {
+    width-request: 10;
+    height-request: 200;
+    valign: start;
+    vexpand-set: true;
+
+    Adw.Breakpoint {
+      condition ("max-width: 500px")
+
+      setters {
+        multi_layout_view.layout-name: "vertical";
+        _bin.height-request: 420;
+        _title_label.xalign: 0.5;
+        _first_subtitle_label.xalign: 0.5;
+        _first_subtitle_label.justify: center;
+        _second_subtitle_label.xalign: 0.5;
+        _second_subtitle_label.justify: center;
+      }
+    }
+
+    child: Adw.MultiLayoutView multi_layout_view {
+      Adw.Layout {
+        name: "horizontal";
+
+        content: Box _horizontal_layout_box {
+          valign: center;
+          vexpand: true;
+          hexpand: true;
+          margin-bottom: 12;
+          margin-end: 12;
+          margin-start: 12;
+          margin-top: 12;
+          spacing: 12;
+
+          Adw.LayoutSlot {
+            id: "cover";
+          }
+
+          Box {
+            hexpand: true;
+            margin-top: 12;
+            orientation: vertical;
+            vexpand: true;
+
+            Adw.LayoutSlot {
+              id: "title-label";
+            }
+
+            Adw.LayoutSlot {
+              id: "first-subtitle-label";
+            }
+
+            Adw.LayoutSlot {
+              id: "second-subtitle-label";
+            }
+          }
+
+          Box {
+            orientation: vertical;
+            vexpand: true;
+            homogeneous: true;
+
+            Box {
+              halign: end;
+              margin-end: 12;
+              spacing: 6;
+              valign: center;
+
+              Adw.LayoutSlot {
+                id: "share-button";
+              }
+
+              Adw.LayoutSlot {
+                id: "shuffle-button";
+              }
+
+              Adw.LayoutSlot {
+                id: "play-button";
+              }
+            }
+          }
+        };
+      }
+
+      Adw.Layout {
+        name: "vertical";
+
+        content: Box _vertical_layout_box {
+          valign: center;
+          halign: center;
+          vexpand: true;
+          hexpand: true;
+          orientation: vertical;
+          spacing: 12;
+          margin-top: 12;
+          margin-bottom: 12;
+          margin-start: 12;
+          margin-end: 12;
+
+          Adw.LayoutSlot {
+            id: "cover";
+          }
+
+          Adw.LayoutSlot {
+            id: "title-label";
+          }
+
+          Adw.LayoutSlot {
+            id: "first-subtitle-label";
+          }
+
+          Adw.LayoutSlot {
+            id: "second-subtitle-label";
+          }
+
+          Box {
+            halign: center;
+            spacing: 12;
+            valign: center;
+
+            Adw.LayoutSlot {
+              id: "play-button";
+            }
+
+            Adw.LayoutSlot {
+              id: "shuffle-button";
+            }
+
+            Adw.LayoutSlot {
+              id: "share-button";
+            }
+          }
+        };
+      }
+
+      // The cover slot: a 1:1 collage clamped to 160px (same structure the
+      // home collage cards use). Hidden until covers are loaded; falls back to
+      // the record placeholder Picture when the mix resolves zero album art.
+      // halign:start (not center) so the collage hugs the LEFT edge of its
+      // slot. In the wide horizontal layout the cover's LayoutSlot is allocated
+      // extra width (the Adw.Clamp reports a larger natural width than the
+      // 160px collage), and a centered collage drifted right of the track rows
+      // below — breaking the one-shared-column alignment. Left-aligning keeps
+      // the collage's left edge on the same vertical line as the rows. The
+      // narrow/vertical layout still centers the whole header via its parent
+      // box's halign:center, so the collage stays centered there.
+      [cover]
+      Adw.Clamp {
+        maximum-size: 160;
+        tightening-threshold: 160;
+        halign: start;
+
+        AspectFrame collage_frame {
+          ratio: 1.0;
+          obey-child: false;
+          halign: start;
+          valign: center;
+          width-request: 160;
+          height-request: 160;
+          overflow: hidden;
+          visible: false;
+
+          styles [
+            "card-image",
+          ]
+
+          child: Grid collage_grid {
+            hexpand: true;
+            vexpand: true;
+            column-homogeneous: true;
+            row-homogeneous: true;
+
+            Picture cell_0 {
+              width-request: 80;
+              height-request: 80;
+              content-fit: cover;
+              layout {
+                column: 0;
+                row: 0;
+              }
+            }
+
+            Picture cell_1 {
+              width-request: 80;
+              height-request: 80;
+              content-fit: cover;
+              layout {
+                column: 1;
+                row: 0;
+              }
+            }
+
+            Picture cell_2 {
+              width-request: 80;
+              height-request: 80;
+              content-fit: cover;
+              layout {
+                column: 0;
+                row: 1;
+              }
+            }
+
+            Picture cell_3 {
+              width-request: 80;
+              height-request: 80;
+              content-fit: cover;
+              layout {
+                column: 1;
+                row: 1;
+              }
+            }
+          };
+        }
+      }
+
+      [title-label]
+      Label _title_label {
+        styles [
+          "title-1",
+        ]
+
+        ellipsize: end;
+        vexpand: true;
+        xalign: 0.0;
+      }
+
+      [first-subtitle-label]
+      Label _first_subtitle_label {
+        styles [
+          "dim-label",
+          "title-3",
+        ]
+
+        wrap: true;
+        ellipsize: end;
+        lines: 2;
+        vexpand: true;
+        xalign: 0.0;
+      }
+
+      [second-subtitle-label]
+      Label _second_subtitle_label {
+        styles [
+          "dim-label",
+        ]
+
+        ellipsize: end;
+        vexpand: true;
+        lines: 1;
+        xalign: 0.0;
+      }
+
+      [share-button]
+      Button _share_button {
+        icon-name: "share-alt-symbolic";
+        tooltip-text: _("Copy mix to clipboard");
+        valign: center;
+
+        styles [
+          "flat",
+          "circular",
+        ]
+      }
+
+      [shuffle-button]
+      Button _shuffle_button {
+        icon-name: "media-playlist-shuffle-symbolic";
+
+        styles [
+          "flat",
+          "pill",
+        ]
+      }
+
+      [play-button]
+      Button _play_button {
+        styles [
+          "suggested-action",
+          "pill",
+        ]
+
+        icon-name: "media-playback-start-symbolic";
+      }
+    };
+  }
+
+  Separator {
+    valign: start;
+  }
+
+  $HTAutoLoadWidget _auto_load {
+    valign: start;
+    margin-top: 12;
+    margin-start: 12;
+    margin-end: 12;
+    margin-bottom: 12;
+  }
+}

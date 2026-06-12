@@ -1,0 +1,136 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $HTQueueWidget: Box {
+  orientation: vertical;
+  spacing: 12;
+
+  Adw.ToolbarView {
+    [top]
+    Box queue_toolbar {
+      spacing: 6;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 6;
+      margin-bottom: 6;
+
+      ToggleButton shuffle_toggle {
+        icon-name: "media-playlist-shuffle-symbolic";
+        tooltip-text: _("Shuffle");
+        valign: center;
+
+        styles [
+          "flat",
+        ]
+      }
+
+      Button repeat_toggle {
+        icon-name: "media-playlist-consecutive-symbolic";
+        tooltip-text: _("Repeat");
+        valign: center;
+
+        styles [
+          "flat",
+        ]
+      }
+
+      Box {
+        hexpand: true;
+      }
+
+      Button clear_button {
+        icon-name: "user-trash-symbolic";
+        tooltip-text: _("Clear queue");
+        valign: center;
+
+        styles [
+          "flat",
+        ]
+      }
+    }
+
+    content: ScrolledWindow {
+      vexpand: true;
+
+      styles [
+        "undershoot-bottom",
+      ]
+
+      Box {
+        orientation: vertical;
+        spacing: 12;
+        margin-bottom: 12;
+        margin-top: 12;
+        margin-start: 12;
+        margin-end: 12;
+
+        Box played_songs_box {
+          orientation: vertical;
+          spacing: 6;
+
+          Label {
+            styles [
+              "title-4",
+              "dim-label",
+            ]
+
+            ellipsize: end;
+            hexpand: true;
+            xalign: 0.0;
+            label: _("Played Songs");
+          }
+
+          ListBox played_songs_list {
+            styles [
+              "tracks-list-box",
+            ]
+          }
+        }
+
+        Box queued_songs_box {
+          orientation: vertical;
+          spacing: 6;
+
+          Label {
+            styles [
+              "title-4",
+            ]
+
+            ellipsize: end;
+            hexpand: true;
+            xalign: 0.0;
+            label: _("Queue");
+          }
+
+          ListBox queued_songs_list {
+            styles [
+              "tracks-list-box",
+            ]
+          }
+        }
+
+        Box next_songs_box {
+          orientation: vertical;
+          spacing: 6;
+
+          Label {
+            styles [
+              "title-4",
+            ]
+
+            ellipsize: end;
+            hexpand: true;
+            xalign: -0.0;
+            label: _("Next Songs");
+          }
+
+          ListBox next_songs_list {
+            styles [
+              "tracks-list-box",
+            ]
+          }
+        }
+      }
+    };
+  }
+}

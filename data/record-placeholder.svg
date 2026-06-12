@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Timbre idle-player placeholder: a vinyl record in the app palette.
+     Copyright (C) 2026 Tyler Reece — GPL-3.0-or-later -->
+
+<svg
+   width="512"
+   height="512"
+   viewBox="0 0 512 512"
+   version="1.1"
+   id="svg26"
+   sodipodi:docname="record-placeholder.svg"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview26"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1.5058594"
+     inkscape:cx="256"
+     inkscape:cy="256"
+     inkscape:window-width="1671"
+     inkscape:window-height="1053"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg26" />
+  <defs
+     id="defs6">
+    <radialGradient
+       id="disc"
+       cx="0.38"
+       cy="0.34"
+       r="0.85">
+      <stop
+         offset="0"
+         stop-color="#23232c"
+         id="stop1" />
+      <stop
+         offset="0.55"
+         stop-color="#15151b"
+         id="stop2" />
+      <stop
+         offset="1"
+         stop-color="#0e0e13"
+         id="stop3" />
+    </radialGradient>
+    <linearGradient
+       id="sheen"
+       x1="0"
+       y1="0"
+       x2="1"
+       y2="1">
+      <stop
+         offset="0"
+         stop-color="#eae3cf"
+         stop-opacity="0.10"
+         id="stop4" />
+      <stop
+         offset="0.35"
+         stop-color="#eae3cf"
+         stop-opacity="0.02"
+         id="stop5" />
+      <stop
+         offset="1"
+         stop-color="#eae3cf"
+         stop-opacity="0"
+         id="stop6" />
+    </linearGradient>
+  </defs>
+  <!-- card background -->
+  <rect
+     width="512"
+     height="512"
+     rx="28"
+     fill="#2d2d36"
+     id="rect6" />
+  <!-- disc -->
+  <circle
+     cx="256"
+     cy="256"
+     r="212"
+     fill="url(#disc)"
+     id="circle6" />
+  <circle
+     cx="256"
+     cy="256"
+     r="212"
+     fill="none"
+     stroke="#000000"
+     stroke-opacity="0.45"
+     stroke-width="2"
+     id="circle7" />
+  <!-- grooves -->
+  <g
+     fill="none"
+     stroke="#eae3cf"
+     stroke-opacity="0.07"
+     stroke-width="1.5"
+     id="g14">
+    <circle
+       cx="256"
+       cy="256"
+       r="196"
+       id="circle8" />
+    <circle
+       cx="256"
+       cy="256"
+       r="182"
+       id="circle9" />
+    <circle
+       cx="256"
+       cy="256"
+       r="168"
+       id="circle10" />
+    <circle
+       cx="256"
+       cy="256"
+       r="154"
+       id="circle11" />
+    <circle
+       cx="256"
+       cy="256"
+       r="140"
+       id="circle12" />
+    <circle
+       cx="256"
+       cy="256"
+       r="126"
+       id="circle13" />
+    <circle
+       cx="256"
+       cy="256"
+       r="112"
+       id="circle14" />
+  </g>
+  <g
+     fill="none"
+     stroke="#eae3cf"
+     stroke-opacity="0.04"
+     stroke-width="1"
+     id="g20">
+    <circle
+       cx="256"
+       cy="256"
+       r="189"
+       id="circle15" />
+    <circle
+       cx="256"
+       cy="256"
+       r="175"
+       id="circle16" />
+    <circle
+       cx="256"
+       cy="256"
+       r="161"
+       id="circle17" />
+    <circle
+       cx="256"
+       cy="256"
+       r="147"
+       id="circle18" />
+    <circle
+       cx="256"
+       cy="256"
+       r="133"
+       id="circle19" />
+    <circle
+       cx="256"
+       cy="256"
+       r="119"
+       id="circle20" />
+  </g>
+  <!-- light sheen across the grooves -->
+  <circle
+     cx="256"
+     cy="256"
+     r="212"
+     fill="url(#sheen)"
+     id="circle21" />
+  <!-- label -->
+  <circle
+     cx="256"
+     cy="256"
+     r="84"
+     fill="#eae3cf"
+     id="circle22" />
+  <circle
+     cx="256"
+     cy="256"
+     r="84"
+     fill="none"
+     stroke="#6d8fa3"
+     stroke-width="6"
+     id="circle23" />
+  <circle
+     cx="256"
+     cy="256"
+     r="62"
+     fill="none"
+     stroke="#6d8fa3"
+     stroke-opacity="0.35"
+     stroke-width="2"
+     id="circle24" />
+  <!-- eighth note on the label -->
+  <!-- spindle hole -->
+  <circle
+     cx="256"
+     cy="256"
+     r="9"
+     fill="#2d2d36"
+     id="circle25" />
+  <circle
+     cx="256"
+     cy="256"
+     r="9"
+     fill="none"
+     stroke="#00000055"
+     stroke-width="2"
+     id="circle26" />
+</svg>

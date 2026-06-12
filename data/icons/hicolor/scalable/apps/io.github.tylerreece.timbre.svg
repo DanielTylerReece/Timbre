@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Timbre app icon: "Stump & Sprout" log end — thick bark, wobbly growth
+     rings (= record grooves), radial cracks, a heart-label spindle, and a
+     fresh green sprout. Palette matched to timbre-7 wordmark. GPL-3.0 -->
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="timbreBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22201f"/>
+      <stop offset="1" stop-color="#141312"/>
+    </linearGradient>
+    <radialGradient id="timbreWood" cx="0.46" cy="0.46" r="0.75">
+      <stop offset="0" stop-color="#d3a276"/>
+      <stop offset="0.55" stop-color="#b07b4a"/>
+      <stop offset="1" stop-color="#8a5a33"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="110" fill="url(#timbreBg)"/>
+
+  <!-- THICK irregular bark ring (the tree-ness anchor) -->
+  <path d="M 256 64
+           C 372 60, 456 152, 450 262
+           C 444 372, 360 452, 250 448
+           C 142 444, 60 360, 66 250
+           C 72 146, 148 68, 256 64 Z"
+        fill="#4a2e18"/>
+  <!-- bark notches -->
+  <g stroke="#2e1c0e" stroke-width="9" stroke-linecap="round">
+    <line x1="256" y1="64" x2="256" y2="92"/>
+    <line x1="372" y1="104" x2="352" y2="126"/>
+    <line x1="442" y1="216" x2="414" y2="224"/>
+    <line x1="430" y1="340" x2="404" y2="328"/>
+    <line x1="330" y1="436" x2="320" y2="408"/>
+    <line x1="196" y1="438" x2="204" y2="410"/>
+    <line x1="96" y1="350" x2="122" y2="336"/>
+    <line x1="74" y1="220" x2="102" y2="226"/>
+    <line x1="142" y1="106" x2="160" y2="128"/>
+  </g>
+
+  <!-- sapwood face -->
+  <path d="M 256 96
+           C 352 92, 422 168, 418 258
+           C 414 348, 344 418, 252 414
+           C 162 410, 96 344, 100 252
+           C 104 164, 166 100, 256 96 Z"
+        fill="url(#timbreWood)"/>
+
+  <!-- growth rings (wobbly, off-center heart like real wood) -->
+  <g fill="none" stroke="#6e4527" stroke-width="4" opacity="0.85">
+    <path d="M 244 126 C 326 124, 390 184, 388 260 C 386 334, 320 390, 244 386 C 172 382, 122 330, 126 254 C 130 184, 170 128, 244 126 Z"/>
+    <path d="M 238 158 C 302 156, 354 202, 352 260 C 350 316, 300 358, 240 354 C 184 350, 148 312, 152 254 C 156 200, 182 160, 238 158 Z"/>
+    <path d="M 234 190 C 280 188, 318 222, 316 258 C 314 296, 280 326, 236 322 C 196 318, 174 292, 178 252 C 182 216, 196 192, 234 190 Z"/>
+    <path d="M 230 220 C 260 218, 284 238, 282 258 C 280 280, 260 296, 232 292 C 208 288, 198 272, 202 250 C 206 230, 208 222, 230 220 Z"/>
+  </g>
+
+  <!-- radial split cracks (log ends always have these) -->
+  <g stroke="#4a2e18" stroke-width="7" stroke-linecap="round">
+    <path d="M 240 252 L 178 142"/>
+    <path d="M 244 256 L 372 332"/>
+    <path d="M 236 258 L 142 318"/>
+  </g>
+
+  <!-- heart label + spindle -->
+  <circle cx="238" cy="250" r="30" fill="#eee3c8"/>
+  <circle cx="238" cy="250" r="30" fill="none" stroke="#8a5a33" stroke-width="5"/>
+  <circle cx="238" cy="250" r="6" fill="#3a2412"/>
+
+  <!-- fresh sprout growing from the stump edge (life + unmistakable tree) -->
+  <g>
+    <path d="M 368 110 C 372 84, 372 64, 364 40" fill="none" stroke="#5b7d42" stroke-width="11" stroke-linecap="round"/>
+    <path d="M 366 64 q -32 -18 -54 2 q 26 18 54 -2 z" fill="#7ba05b"/>
+    <path d="M 366 44 q 28 -22 52 -6 q -22 22 -52 6 z" fill="#8fb56e"/>
+  </g>
+</svg>

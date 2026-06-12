@@ -1,0 +1,215 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $HTGenericTrackWidget: ListBoxRow {
+  selectable: false;
+  // Explicit: a single click anywhere on the row (except the artist/album
+  // links or the menu button) activates it -> plays the track. The host
+  // ListBox connects row-activated.
+  activatable: true;
+
+  Adw.BreakpointBin {
+    width-request: 100;
+    height-request: 56;
+
+    Adw.Breakpoint {
+      condition ("max-width: 600px")
+
+      setters {
+        _grid.visible: false;
+        _narrow_box.visible: true;
+      }
+    }
+
+    child: Box {
+      margin-start: 6;
+      margin-end: 6;
+
+      Stack album_stack {
+        transition-type: none;
+        hhomogeneous: true;
+        vhomogeneous: true;
+        width-request: 44;
+        margin-end: 12;
+        margin-bottom: 6;
+        margin-top: 6;
+
+        Image image {
+          pixel-size: 44;
+          icon-name: "emblem-music-symbolic";
+          overflow: hidden;
+
+          styles [
+            "small-image",
+          ]
+        }
+
+        Image now_playing_indicator {
+          icon-name: "media-playback-start-symbolic";
+          pixel-size: 24;
+
+          styles [
+            "small-image",
+          ]
+        }
+      }
+
+      Grid _grid {
+        column-homogeneous: true;
+        column-spacing: 6;
+        margin-end: 12;
+        hexpand: true;
+
+        $HTLinkLabelWidget track_album_label {
+          xalign: "0";
+          ellipsize: "3";
+
+          layout {
+            column: "5";
+            column-span: "1";
+            row: "0";
+          }
+        }
+
+        Box {
+          // can-target: false so a click on the title text passes through to
+          // the ListBoxRow's activation gesture (single-click row activate ->
+          // play). The title is non-interactive; only the artist/album links
+          // and the 3-dot menu should capture clicks.
+          can-target: false;
+
+          layout {
+            column: "0";
+            column-span: "3";
+            row: "0";
+          }
+
+          Label track_title_label {
+            can-target: false;
+
+            styles [
+              "title-4",
+            ]
+
+            ellipsize: end;
+            label: _("Title");
+            vexpand: true;
+            xalign: 0.0;
+          }
+
+          Label explicit_label {
+            can-target: false;
+            label: "E";
+
+            styles [
+              "explicit-label",
+            ]
+
+            visible: false;
+            valign: center;
+            margin-start: 6;
+          }
+        }
+
+        $HTLinkLabelWidget artist_label {
+          xalign: "0";
+          ellipsize: "3";
+
+          layout {
+            column: "3";
+            column-span: "1";
+            row: "0";
+          }
+        }
+      }
+
+      Box _narrow_box {
+        orientation: vertical;
+        visible: false;
+        hexpand: true;
+
+        Box {
+          // Non-interactive title row: pass clicks through to row activation.
+          can-target: false;
+
+          Label {
+            can-target: false;
+            label: bind track_title_label.label;
+
+            styles [
+              "title-4",
+            ]
+
+            ellipsize: end;
+            vexpand: true;
+            xalign: 0.0;
+          }
+
+          Label {
+            can-target: false;
+            visible: bind explicit_label.visible;
+            label: "E";
+
+            styles [
+              "explicit-label",
+            ]
+
+            valign: center;
+            margin-start: 6;
+          }
+        }
+
+        $HTLinkLabelWidget artist_label_2 {
+          xalign: "0";
+          use-markup: "true";
+          ellipsize: "3";
+          margin-bottom: "6";
+          label: bind artist_label.label;
+        }
+      }
+
+      Label track_duration_label {
+        can-target: false;
+        label: "00:00";
+        margin-end: 12;
+        vexpand: true;
+      }
+
+      MenuButton menu_button {
+        icon-name: "view-more-symbolic";
+        menu-model: track_menu;
+        valign: center;
+
+        styles [
+          "flat",
+        ]
+      }
+    };
+  }
+}
+
+menu track_menu {
+  item {
+    action: "trackwidget.play-next";
+    label: _("Play next");
+  }
+
+  item {
+    action: "trackwidget.add-to-queue";
+    label: _("Add to queue");
+  }
+
+  item {
+    action: "trackwidget.add-to-my-collection";
+    label: _("Add to my collection");
+  }
+
+  item {
+    action: "trackwidget.copy-share-url";
+    label: _("Copy share url");
+  }
+
+  submenu playlists_submenu {
+    label: _("Add to a playlist");
+  }
+}

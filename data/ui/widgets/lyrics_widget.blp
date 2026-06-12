@@ -1,0 +1,56 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $HTLyricsWidget: Box {
+  orientation: vertical;
+  overflow: hidden;
+
+  Stack stack {
+
+    StackPage {
+      title: _("No Lyrics");
+      name: "status_page";
+
+      child: Adw.StatusPage {
+        title: _("No Lyrics");
+        icon-name: "missing-lyrics-symbolic";
+        description: _("Lyrics are not available for this song");
+      };
+    }
+
+    StackPage {
+      title: _("Lyrics");
+      name: "lyrics_page";
+
+      child: Overlay {
+        [overlay]
+        Label sync_indicator {
+          halign: end;
+          valign: start;
+          margin-top: 6;
+          margin-end: 6;
+          label: _("Synced");
+
+          styles [
+            "caption",
+            "dim-label",
+            "lyrics-sync-indicator",
+          ]
+        }
+
+        ScrolledWindow {
+          hscrollbar-policy: never;
+          ListView list_view {
+            vexpand: true;
+            overflow: visible;
+            margin-bottom: 12;
+
+            styles [
+              "lyrics-widget",
+            ]
+          }
+        }
+      };
+    }
+  }
+}

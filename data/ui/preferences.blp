@@ -1,0 +1,129 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $JTPreferences: Adw.PreferencesDialog {
+  Adw.PreferencesPage {
+    Adw.PreferencesGroup {
+      title: _("Audio");
+
+      Adw.ComboRow sink_row {
+        model: StringList {
+          strings [
+            _("Automatic"),
+            "PulseAudio",
+            "ALSA",
+            "Jack",
+            "OSS",
+            "Pipewire",
+          ]
+        };
+
+        title: _("Preferred Audio Sink");
+        subtitle: _("Gapless playback is disabled for the native Pipewire sink due to a bug. Use 'Automatic' for gapless playback.");
+      }
+
+      Adw.ComboRow alsa_device_row {
+        title: _("ALSA Device");
+        subtitle: _("Device used for exclusive ALSA access");
+      }
+
+      Adw.ComboRow bitrate_row {
+        model: StringList {
+          strings [
+            _("Unlimited"),
+            "320 kbps",
+            "192 kbps",
+            "128 kbps",
+          ]
+        };
+
+        title: _("Maximum Bitrate");
+      }
+
+      Adw.SwitchRow normalize_row {
+        title: _("Normalize volume");
+      }
+
+      Adw.SwitchRow quadratic_volume_row {
+        title: _("Use quadratic volume control");
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Playback");
+
+      Adw.SwitchRow background_row {
+        title: _("Keep playing in the background");
+        subtitle: _("Closing the window hides it instead of quitting while music plays.");
+      }
+
+      Adw.SwitchRow external_lyrics_row {
+        title: _("Fetch lyrics online (LRCLIB)");
+        subtitle: _("When Jellyfin has no lyrics, look them up on lrclib.net. Track, artist, and album names are sent.");
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Server");
+
+      Adw.ActionRow server_url_row {
+        title: _("Server URL");
+        subtitle: _("Not connected");
+      }
+
+      Adw.ButtonRow logout_row {
+        title: _("Log Out");
+
+        styles [
+          "destructive-action",
+        ]
+
+        activated => $on_logout();
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("AI Discovery");
+
+      Adw.ComboRow ai_provider_row {
+        model: StringList {
+          strings [
+            _("None"),
+            _("OpenAI-compatible"),
+            _("Anthropic"),
+          ]
+        };
+
+        title: _("Provider");
+      }
+
+      Adw.EntryRow ai_endpoint_row {
+        title: _("Endpoint");
+      }
+
+      Adw.ComboRow ai_model_combo {
+        title: _("Model");
+        visible: false;
+      }
+
+      Adw.EntryRow ai_model_row {
+        title: _("Custom model");
+        visible: false;
+      }
+
+      Adw.PasswordEntryRow ai_key_row {
+        title: _("API Key");
+      }
+
+      Adw.SwitchRow push_bios_row {
+        title: _("Save AI bios to Jellyfin");
+        subtitle: _("Writes generated bios to the server so other apps see them");
+      }
+
+      Adw.ButtonRow ai_test_row {
+        title: _("Test connection");
+        start-icon-name: "network-transmit-receive-symbolic";
+      }
+    }
+  }
+}

@@ -1,0 +1,251 @@
+using Gtk 4.0;
+using Adw 1;
+
+Box _main {
+  orientation: vertical;
+
+  // valign:start + vexpand-set so the header band keeps its NATURAL height on a
+  // sparse artist (few tracks). Without these the BreakpointBin stretched to
+  // fill the vexpanding content column, vertically centring the avatar/title in
+  // a huge empty band. Matching tracks_list/mix templates: the band stays put
+  // and negative space falls BELOW the last section instead.
+  Adw.BreakpointBin _bin {
+    width-request: 10;
+    height-request: 150;
+    valign: start;
+    vexpand-set: true;
+
+    Adw.Breakpoint {
+      condition ("max-width: 500px")
+
+      setters {
+        multi_layout_view.layout-name: "vertical";
+        _bin.height-request: 360;
+        _avatar.size: 200;
+        _first_subtitle_label.xalign: 0.5;
+        _name_label.xalign: 0.5;
+      }
+    }
+
+    child: Adw.MultiLayoutView multi_layout_view {
+      Adw.Layout {
+        name: "horizontal";
+
+        content: Box _horizontal_layout_box {
+          valign: center;
+          vexpand: true;
+          hexpand: true;
+          margin-bottom: 12;
+          margin-end: 12;
+          margin-start: 12;
+          margin-top: 12;
+          spacing: 12;
+
+          Adw.LayoutSlot {
+            id: "avatar";
+          }
+
+          Box {
+            hexpand: true;
+            margin-top: 12;
+            orientation: vertical;
+
+            Adw.LayoutSlot {
+              id: "name-label";
+            }
+
+            Adw.LayoutSlot {
+              id: "first-subtitle-label";
+            }
+
+            Adw.LayoutSlot {
+              id: "artist-button";
+            }
+          }
+
+          Box {
+            halign: end;
+            margin-end: 12;
+            spacing: 6;
+            valign: center;
+
+            Adw.LayoutSlot {
+              id: "radio-button";
+            }
+
+            Adw.LayoutSlot {
+              id: "share-button";
+            }
+
+            Adw.LayoutSlot {
+              id: "follow-button";
+            }
+
+            Adw.LayoutSlot {
+              id: "shuffle-button";
+            }
+
+            Adw.LayoutSlot {
+              id: "play-button";
+            }
+          }
+        };
+      }
+
+      Adw.Layout {
+        name: "vertical";
+
+        content: Box _vertical_layout_box {
+          valign: center;
+          halign: center;
+          vexpand: true;
+          hexpand: true;
+          orientation: vertical;
+          spacing: 12;
+          margin-top: 12;
+          margin-bottom: 12;
+          margin-start: 12;
+          margin-end: 12;
+
+          Adw.LayoutSlot {
+            id: "avatar";
+          }
+
+          Adw.LayoutSlot {
+            id: "name-label";
+          }
+
+          Adw.LayoutSlot {
+            id: "first-subtitle-label";
+          }
+
+          Box {
+            halign: center;
+            spacing: 12;
+            valign: center;
+
+            Adw.LayoutSlot {
+              id: "play-button";
+            }
+
+            Adw.LayoutSlot {
+              id: "shuffle-button";
+            }
+
+            Adw.LayoutSlot {
+              id: "follow-button";
+            }
+
+            Adw.LayoutSlot {
+              id: "share-button";
+            }
+
+            Adw.LayoutSlot {
+              id: "radio-button";
+            }
+          }
+        };
+      }
+
+      [avatar]
+      Adw.Avatar _avatar {
+        icon-name: "music-artist-symbolic";
+        overflow: hidden;
+        size: 120;
+      }
+
+      [name-label]
+      Label _name_label {
+        styles [
+          "title-1",
+        ]
+
+        ellipsize: end;
+        vexpand: true;
+        xalign: 0.0;
+        yalign: 0.0;
+      }
+
+      [first-subtitle-label]
+      Label _first_subtitle_label {
+        styles [
+          "dim-label",
+        ]
+
+        ellipsize: end;
+        vexpand: true;
+        xalign: 0.0;
+        yalign: 0.0;
+      }
+
+      [artist-button]
+      Button _artist_button {
+        visible: false;
+      }
+
+      [radio-button]
+      Button _update_button {
+        icon-name: "view-refresh-symbolic";
+        tooltip-text: _("Refresh AI bio + popularity");
+        valign: center;
+        visible: false;
+
+        styles [
+          "flat",
+          "circular",
+        ]
+      }
+
+      [share-button]
+      Button _share_button {
+        icon-name: "share-alt-symbolic";
+        tooltip-text: _("Copy Share URL");
+        valign: center;
+
+        styles [
+          "flat",
+          "circular",
+        ]
+      }
+
+      [follow-button]
+      Button _follow_button {
+        icon-name: "heart-outline-thick-symbolic";
+        valign: center;
+
+        styles [
+          "flat",
+          "circular",
+        ]
+      }
+
+      [shuffle-button]
+      Button _shuffle_button {
+        icon-name: "media-playlist-shuffle-symbolic";
+
+        styles [
+          "flat",
+          "pill",
+        ]
+      }
+
+      [play-button]
+      Button _play_button {
+        styles [
+          "suggested-action",
+          "pill",
+        ]
+
+        icon-name: "media-playback-start-symbolic";
+      }
+    };
+  }
+
+  Separator {
+    valign: start;
+  }
+
+  Box _content_box {
+    orientation: vertical;
+  }
+}

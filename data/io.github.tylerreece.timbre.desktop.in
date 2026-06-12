@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Timbre
+Comment=Jellyfin music client for Linux
+GenericName=Jellyfin Music Client
+Exec=timbre %U
+Icon=io.github.tylerreece.timbre
+Terminal=false
+Type=Application
+Categories=GNOME;GTK;Music;Audio;AudioVideo;
+StartupNotify=true
+MimeType=x-scheme-handler/jellyfin;
+Keywords=music;audio;streaming;jellyfin;player;

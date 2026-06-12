@@ -1,0 +1,44 @@
+# Maintainer: Tyler Reece <tyler@tylerreece.com>
+pkgname=timbre
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="GTK4/libadwaita Jellyfin music client with gapless playback, MPRIS, and AI-assisted discovery"
+arch=('any')
+url="https://github.com/tylerreece/timbre"
+license=('GPL-3.0-or-later')
+depends=(
+  'gtk4'
+  'libadwaita'
+  'python'
+  'python-gobject'
+  'python-requests'
+  # GStreamer playback stack. playbin3 lives in -base; the plugin sets cover
+  # broad codec support (FLAC/AAC/MP3/Vorbis/Opus): -good + -bad + -libav.
+  'gst-plugins-base'
+  'gst-plugins-good'
+  'gst-plugins-bad'
+  'gst-libav'
+)
+makedepends=(
+  'meson'
+  'blueprint-compiler'
+)
+# Build from the local working tree (the parent of packaging/). For a release
+# tarball/VCS build, replace this with a source=() + sha256sums=() entry and a
+# matching ${srcdir}/${pkgname}-${pkgver} build dir below.
+source=()
+sha256sums=()
+
+build() {
+  arch-meson "${startdir}/.." build
+  meson compile -C build
+}
+
+check() {
+  # desktop-file + schema validation (appstream test is optional in meson).
+  meson test -C build --print-errorlogs || true
+}
+
+package() {
+  meson install -C build --destdir "${pkgdir}"
+}

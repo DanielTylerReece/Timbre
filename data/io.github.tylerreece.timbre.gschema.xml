@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="timbre">
+  <schema id="io.github.tylerreece.timbre" path="/io/github/tylerreece/timbre/">
+
+    <!-- Window geometry -->
+    <key name="window-width" type="i">
+      <default>1000</default>
+    </key>
+    <key name="window-height" type="i">
+      <default>800</default>
+    </key>
+
+    <!-- Playback state persistence -->
+    <key name="last-playing-index" type="i">
+      <default>-1</default>
+    </key>
+    <key name="last-playing-thing-id" type="s">
+      <default>''</default>
+    </key>
+    <key name="last-playing-thing-type" type="s">
+      <default>''</default>
+    </key>
+    <key name="last-volume" type="i">
+      <default>10</default>
+    </key>
+    <key name="repeat" type="i">
+      <default>0</default>
+    </key>
+
+    <!-- Audio sink -->
+    <key name="preferred-sink" type="i">
+      <range min="0" max="6"/>
+      <default>0</default>
+    </key>
+    <key name="alsa-device" type="s">
+      <default>'default'</default>
+    </key>
+
+    <!-- Audio quality — renamed from "quality" (tidal-specific) -->
+    <!-- 0 = unlimited, positive integer = max kbps cap -->
+    <key name="max-bitrate" type="i">
+      <default>0</default>
+    </key>
+
+    <!-- Audio processing -->
+    <key name="normalize" type="b">
+      <default>false</default>
+    </key>
+    <key name="quadratic-volume" type="b">
+      <default>false</default>
+    </key>
+
+    <!-- Background play (renamed from run-background) -->
+    <key name="background-play" type="b">
+      <default>true</default>
+    </key>
+
+    <!-- Fetch lyrics from LRCLIB when Jellyfin has none -->
+    <key name="external-lyrics" type="b">
+      <default>true</default>
+    </key>
+
+    <!-- Jellyfin server connection -->
+    <key name="server-url" type="s">
+      <default>''</default>
+    </key>
+    <key name="device-id" type="s">
+      <default>''</default>
+    </key>
+
+    <!-- AI features (Phase 2+) -->
+    <key name="ai-provider" type="s">
+      <default>'none'</default>
+    </key>
+    <key name="ai-endpoint" type="s">
+      <default>''</default>
+    </key>
+    <key name="ai-model" type="s">
+      <default>''</default>
+    </key>
+
+    <!-- Push AI-generated bios up to Jellyfin (Overview) so other apps see them -->
+    <key name="push-bios" type="b">
+      <default>false</default>
+    </key>
+
+    <!-- Library selection -->
+    <key name="selected-libraries" type="as">
+      <default>[]</default>
+    </key>
+
+    <!-- Mix/playlist date tracking -->
+    <key name="last-mixes-date" type="s">
+      <default>''</default>
+    </key>
+
+  </schema>
+</schemalist>

@@ -1,0 +1,64 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $HTCardWidget: Adw.BreakpointBin {
+  styles [
+    "card-bg",
+  ]
+
+  hexpand: true;
+  halign: center;
+  width-request: 167;
+  height-request: 214;
+
+  child: Box {
+    margin-bottom: 6;
+    margin-end: 6;
+    margin-start: 6;
+    margin-top: 6;
+    orientation: vertical;
+    spacing: 3;
+
+    GestureClick click_gesture {}
+
+    Image image {
+      halign: center;
+      icon-name: 'emblem-music-symbolic';
+      pixel-size: 155;
+      valign: center;
+      overflow: hidden;
+
+      styles [
+        "card-image",
+      ]
+    }
+
+    Label title_label {
+      styles [
+        "title-4",
+      ]
+
+      max-width-chars: 13;
+      xalign: 0;
+      ellipsize: end;
+    }
+
+    Box details_box {
+      Label detail_label {
+        styles [
+          "dim-label",
+        ]
+
+        max-width-chars: 16;
+        xalign: 0;
+        ellipsize: end;
+      }
+
+      $HTLinkLabelWidget track_artist_label {
+        ellipsize: 'end';
+        max-width-chars: 16;
+        xalign: '0';
+      }
+    }
+  };
+}

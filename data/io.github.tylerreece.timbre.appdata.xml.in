@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop">
+  <id>io.github.tylerreece.timbre</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Timbre</name>
+  <summary>Jellyfin music client</summary>
+  <description>
+    <p>A modern GTK4 music client for Jellyfin servers, with AI-assisted discovery. Based on High Tide by Nokse22.</p>
+  </description>
+  <content_rating type="oars-1.1">
+    <content_attribute id="language-profanity">intense</content_attribute>
+    <content_attribute id="language-humor">moderate</content_attribute>
+    <content_attribute id="sex-themes">moderate</content_attribute>
+    <content_attribute id="drugs-alcohol">moderate</content_attribute>
+    <content_attribute id="violence-realistic">mild</content_attribute>
+  </content_rating>
+
+  <developer id="io.github.tylerreece">
+    <name translate="no">Tyler Reece</name>
+  </developer>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#8FEAEB</color>
+    <color type="primary" scheme_preference="dark">#24C9CB</color>
+  </branding>
+
+  <launchable type="desktop-id">io.github.tylerreece.timbre.desktop</launchable>
+
+  <url type="homepage">https://github.com/tylerreece/timbre</url>
+  <url type="bugtracker">https://github.com/tylerreece/timbre/issues</url>
+  <url type="vcs-browser">https://github.com/tylerreece/timbre</url>
+
+  <translation type="gettext">timbre</translation>
+
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+    <control>touch</control>
+  </recommends>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+
+  <releases>
+    <release version="0.1.0" date="2026-06-11">
+      <description translate="no">
+        <p>Initial Timbre scaffold.</p>
+      </description>
+    </release>
+  </releases>
+
+  <categories>
+    <category>Audio</category>
+    <category>Music</category>
+  </categories>
+
+</component>

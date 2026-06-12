@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# Run with system python3 which has PyGObject:
+# python3 -m pytest -v
+# (uv/pipx pytest may not have gi; use: pytest --python=/usr/bin/python3 or invoke directly)
