@@ -61,6 +61,27 @@ template $JTPreferences: Adw.PreferencesDialog {
         title: _("Fetch lyrics online (LRCLIB)");
         subtitle: _("When Jellyfin has no lyrics, look them up on lrclib.net. Track, artist, and album names are sent.");
       }
+
+      Adw.SwitchRow discord_rpc_row {
+        title: _("Discord Rich Presence");
+        subtitle: _("Show the currently playing track in your Discord status. Requires Discord running on this machine.");
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Cache");
+
+      Adw.SpinRow cache_size_row {
+        title: _("Image cache limit (MiB)");
+        subtitle: _("Maximum size of the on-disk image cache before least-recently-used images are evicted.");
+
+        adjustment: Adjustment {
+          lower: 64;
+          upper: 8192;
+          step-increment: 64;
+          page-increment: 256;
+        };
+      }
     }
 
     Adw.PreferencesGroup {

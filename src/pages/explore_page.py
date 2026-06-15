@@ -34,7 +34,7 @@ no art); their click + arrow handlers are tracked in ``self.signals`` so
 import logging
 from gettext import gettext as _
 
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, Gdk, GLib, Gtk
 
 from ..lib import utils
 from ..lib.search_debounce import SearchDebouncer
@@ -148,6 +148,18 @@ class HTExplorePage(Page):
         ))
         entry.add_controller(focus)
         self._focus_controller = focus
+        # Down/Up move the SUGGESTION SELECTION (not focus) while the dropdown
+        # is open. Bubble phase: the SearchEntry's text widget never consumes
+        # vertical arrows, so handling them here doesn't disturb editing, and
+        # other keys (Escape -> stop-search, Space -> window accel, all typing)
+        # fall straight through untouched. We only STOP propagation for Down/Up
+        # while the popover is visible.
+        keys = Gtk.EventControllerKey()
+        self.signals.append((
+            keys, keys.connect("key-pressed", self._on_entry_key)
+        ))
+        entry.add_controller(keys)
+        self._key_controller = keys
         self.content.append(entry)
         # Exposed so the Ctrl+F shortcut can focus it (window.focus_search()).
         self.search_entry = entry
@@ -161,8 +173,13 @@ class HTExplorePage(Page):
         popover is unparented in ``disconnect_all`` (a parented popover left
         behind would pin the entry and leak the page).
         """
+        # SINGLE (not BROWSE): a populated list starts with NO row selected —
+        # the "free typing" state. BROWSE would force-select the first row on
+        # every rebuild, which we don't want. Click-to-commit (row-activated)
+        # still fires regardless of selection mode. The selected row paints the
+        # Adwaita selected state for the keyboard-nav highlight.
         listbox = Gtk.ListBox(
-            selection_mode=Gtk.SelectionMode.NONE,
+            selection_mode=Gtk.SelectionMode.SINGLE,
             css_classes=["menu"],
         )
         self.signals.append((
@@ -291,15 +308,124 @@ class HTExplorePage(Page):
         self._hide_suggestions()
 
     def _on_stop_search(self, _entry):
-        # Escape in the SearchEntry — hide the dropdown, cancel pending fetch.
+        # Escape in the SearchEntry. Two-stage: if a suggestion is selected,
+        # the FIRST Escape clears the selection (back to free typing) and keeps
+        # the dropdown open; only Escape with no selection hides it. The key
+        # controller intercepts the selection-clearing case before stop-search
+        # fires (see _on_entry_key), so by the time we're here there is no
+        # selection — hide the dropdown and cancel the pending fetch as before.
         self._suggest_query = None
         self._hide_suggestions()
+
+    # ------------------------------------------------------------------ #
+    # Keyboard navigation of the suggestions dropdown (focus stays in the #
+    # entry; only the listbox SELECTION moves).                          #
+    # ------------------------------------------------------------------ #
+
+    def _popover_open(self):
+        popover = getattr(self, "_suggest_popover", None)
+        return popover is not None and popover.get_visible()
+
+    def _suggestion_rows(self):
+        listbox = getattr(self, "_suggest_list", None)
+        if listbox is None:
+            return []
+        rows = []
+        child = listbox.get_first_child()
+        while child is not None:
+            rows.append(child)
+            child = child.get_next_sibling()
+        return rows
+
+    def _select_suggestion(self, row):
+        """Select (and scroll into view) ``row``, or clear when ``row`` is None.
+
+        Selection only — never touches keyboard focus, which stays in the entry
+        so the user can keep typing at any moment.
+        """
+        listbox = getattr(self, "_suggest_list", None)
+        if listbox is None:
+            return
+        if row is None:
+            listbox.unselect_all()
+            return
+        listbox.select_row(row)
+        # Keep the selected row visible if the list ever scrolls.
+        adj = listbox.get_adjustment()
+        if adj is not None:
+            ok, rect = row.compute_bounds(listbox)
+            if ok:
+                top = rect.origin.y
+                bottom = top + rect.size.height
+                value = adj.get_value()
+                page = adj.get_page_size()
+                if top < value:
+                    adj.set_value(top)
+                elif bottom > value + page:
+                    adj.set_value(bottom - page)
+
+    def _on_entry_key(self, _controller, keyval, _keycode, _state):
+        """Down/Up move the suggestion selection while the dropdown is open.
+
+        Returns ``Gdk.EVENT_STOP`` only for the keys it actually handles so
+        normal editing, Escape (stop-search) and the window Space accel are
+        untouched. Enter is intentionally NOT handled here — it flows to the
+        entry's ``activate`` signal, which checks for a selected row, so exactly
+        one commit happens (see ``_on_entry_activate``).
+        """
+        if not self._popover_open():
+            return Gdk.EVENT_PROPAGATE
+        rows = self._suggestion_rows()
+        if not rows:
+            return Gdk.EVENT_PROPAGATE
+        listbox = self._suggest_list
+        current = listbox.get_selected_row()
+
+        if keyval in (Gdk.KEY_Down, Gdk.KEY_KP_Down):
+            if current is None:
+                self._select_suggestion(rows[0])
+            else:
+                idx = rows.index(current)
+                # Stop at the end (Adwaita-conventional — no wrap).
+                if idx < len(rows) - 1:
+                    self._select_suggestion(rows[idx + 1])
+            return Gdk.EVENT_STOP
+
+        if keyval in (Gdk.KEY_Up, Gdk.KEY_KP_Up):
+            if current is None:
+                return Gdk.EVENT_STOP
+            idx = rows.index(current)
+            if idx == 0:
+                # Up from the first row clears selection -> free typing.
+                self._select_suggestion(None)
+            else:
+                self._select_suggestion(rows[idx - 1])
+            return Gdk.EVENT_STOP
+
+        if keyval == Gdk.KEY_Escape and current is not None:
+            # First Escape with a selection clears it (keeps dropdown open);
+            # stop-search (which hides the dropdown) only fires once there's no
+            # selection. Consume so stop-search doesn't also run this press.
+            self._select_suggestion(None)
+            return Gdk.EVENT_STOP
+
+        return Gdk.EVENT_PROPAGATE
 
     # ------------------------------------------------------------------ #
     # Commit (Enter / suggestion click) -> push or live-update           #
     # ------------------------------------------------------------------ #
 
     def _on_entry_activate(self, entry):
+        # If a suggestion is selected via keyboard nav, Enter commits THAT row
+        # (same path as a click: set entry text + commit). Otherwise commit the
+        # typed text. Enter is handled ONLY here (the key controller leaves
+        # Return alone) so exactly one commit happens.
+        listbox = getattr(self, "_suggest_list", None)
+        selected = listbox.get_selected_row() if (
+            listbox is not None and self._popover_open()) else None
+        if selected is not None:
+            self._on_suggestion_row(listbox, selected)
+            return
         self._commit_search(entry.get_text())
 
     def _on_suggestion_row(self, _listbox, row):

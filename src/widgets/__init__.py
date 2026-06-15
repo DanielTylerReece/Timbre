@@ -6,5 +6,7 @@ from .generic_track_widget import HTGenericTrackWidget
 from .link_label_widget import HTLinkLabelWidget
 from .lyrics_widget import HTLyricsWidget
 from .queue_row import JTQueueRow
+from .track_list_view import HTTrackListView, TrackItem
+from .track_row_widget import HTTrackRowWidget
 from .wide_card_widget import HTWideCardWidget
 from .queue_widget import HTQueueWidget

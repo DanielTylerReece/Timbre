@@ -119,6 +119,15 @@ class HTCollectionPage(Page):
         self._sync_button = None
         self._sync_banner = None
         self._sync_bar = None
+        # Staleness fingerprint of the data the carousels were last rendered
+        # from (see _fingerprint). Captured at the end of each successful build;
+        # the page-local "showing" signal re-checks it and rebuilds in place
+        # only when it differs, so a playlist created from a track's menu (or a
+        # favorite toggled / sync finished on another page) appears on return
+        # without a manual re-navigate. ``None`` until the first build completes.
+        self._fingerprint = None
+        # Guards against overlapping staleness checks (a rapid show/hide/show).
+        self._checking_stale = False
 
     # ------------------------------------------------------------------ #
     # Data load                                                          #
@@ -130,6 +139,10 @@ class HTCollectionPage(Page):
         self.albums = db.albums_page(0, _PREVIEW)
         self.tracks = db.tracks_page(0, _PREVIEW)
         self.artists = db.artists_page(0, _PREVIEW)
+        # Snapshot the staleness fingerprint on the SAME worker pass that read
+        # the carousel data, so what we render and what we remember are
+        # consistent (no window where a concurrent write splits them).
+        self._pending_fingerprint = self._fingerprint_sync(db)
 
     def _load_finish(self) -> None:
         self.set_tag("collection")
@@ -160,6 +173,109 @@ class HTCollectionPage(Page):
                 offset, limit, year=year
             ),
         )
+
+        # Record the fingerprint these carousels were built from, then arm the
+        # visibility hook that re-checks it. Both are set here (after a
+        # successful build) so a half-built page never advertises a fingerprint.
+        self._fingerprint = getattr(self, "_pending_fingerprint", None)
+        self._pending_fingerprint = None
+        self._arm_showing_hook()
+
+    # ------------------------------------------------------------------ #
+    # Live refresh on re-show (staleness fingerprint)                    #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _fingerprint_sync(db):
+        """Cheap fingerprint of everything the carousels render from.
+
+        ONE read on the caller's thread (must be a worker, like the rest of
+        ``_load_async``). Captures the changes that should make a re-shown
+        Collection page rebuild:
+
+        * row counts of tracks / albums / artists / playlists — a sync that
+          added or removed items elsewhere (startup sync, another page's F5);
+        * ``SUM(is_favorite)`` across tracks / albums / artists — a favorite
+          toggled from the player pane or an artist/album page (the carousels
+          carry per-card favorite state, so this must invalidate too);
+        * a hash over the full playlist set ``(id, name, track_count)`` in name
+          order — the headline bug: creating a playlist from a track's
+          three-dots menu writes a row immediately; a rename or a track added
+          to an existing playlist changes name/track_count without moving the
+          count. The playlist table is small (tens of rows), so hashing all of
+          it is cheap.
+
+        Returns an opaque tuple; equality is the only contract. Defensive
+        against a missing/closed db (returns ``None`` -> treated as "unknown",
+        never triggers a spurious rebuild).
+        """
+        if db is None:
+            return None
+
+        def query(conn):
+            counts = conn.execute(
+                "SELECT "
+                "(SELECT COUNT(*) FROM tracks), "
+                "(SELECT COUNT(*) FROM albums), "
+                "(SELECT COUNT(*) FROM artists), "
+                "(SELECT COUNT(*) FROM playlists), "
+                "(SELECT COALESCE(SUM(is_favorite),0) FROM tracks), "
+                "(SELECT COALESCE(SUM(is_favorite),0) FROM albums), "
+                "(SELECT COALESCE(SUM(is_favorite),0) FROM artists)"
+            ).fetchone()
+            playlist_rows = conn.execute(
+                "SELECT id, name, COALESCE(track_count, 0) FROM playlists "
+                "ORDER BY id"
+            ).fetchall()
+            return tuple(counts), tuple(tuple(r) for r in playlist_rows)
+
+        try:
+            return db.read(query)
+        except Exception:  # noqa: BLE001 — staleness check must never crash nav
+            logger.debug("collection fingerprint read failed", exc_info=True)
+            return None
+
+    def _arm_showing_hook(self) -> None:
+        """Connect the page-local "showing" signal once, tracked in signals.
+
+        ``Adw.NavigationPage`` emits "showing" each time the page becomes the
+        visible page (push, or pop-to back onto it). We re-check the fingerprint
+        there and rebuild in place when it changed. Connected once per build and
+        parked in ``self.signals`` so ``_rebuild`` / ``disconnect_all`` sweep it
+        like every other page signal (no accretion, no leak).
+        """
+        self.signals.append((self, self.connect("showing", self._on_showing)))
+
+    def _on_showing(self, _page) -> None:
+        """Page became visible again — cheaply re-check for stale data.
+
+        Skips when a sync is in flight (the sync's own rebuild will refresh and
+        re-fingerprint), when we've never finished a build, or when a check is
+        already running. The actual fingerprint read is async (db read off the
+        main thread); the rebuild decision happens on the main loop.
+        """
+        if self._syncing or self._fingerprint is None or self._checking_stale:
+            return
+        if not getattr(self, "_alive", True):
+            return
+        self._checking_stale = True
+        baseline = self._fingerprint
+
+        def work():
+            return self._fingerprint_sync(utils.db)
+
+        def done(current):
+            self._checking_stale = False
+            if not getattr(self, "_alive", True) or self._syncing:
+                return
+            # ``None`` means the read failed/unknown — don't rebuild on noise.
+            if current is not None and current != baseline:
+                self._rebuild()
+
+        def on_error(_exc):
+            self._checking_stale = False
+
+        utils.run_async(work, on_done=done, on_error=on_error, owner=self)
 
     # ------------------------------------------------------------------ #
     # Sync header (button + inline progress)                             #
@@ -238,8 +354,11 @@ class HTCollectionPage(Page):
         if client is None or not getattr(window, "is_logged_in", True):
             utils.send_toast(_("Sync failed — server unreachable"), 3)
             return
-        # Don't overlap an in-flight F5/startup Home sync.
+        # Don't overlap an in-flight F5/startup/Home sync. Give feedback rather
+        # than a dead click — the startup incremental sync now also holds this
+        # flag, so a click during early startup lands here.
         if getattr(window, "_refreshing", False):
+            utils.send_toast(_("Sync already running"), 2)
             return
 
         library_ids = list(utils.settings.get_strv("selected-libraries")) \

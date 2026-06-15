@@ -43,6 +43,8 @@ class JTPreferences(Adw.PreferencesDialog):
     quadratic_volume_row = Gtk.Template.Child()
     background_row = Gtk.Template.Child()
     external_lyrics_row = Gtk.Template.Child()
+    discord_rpc_row = Gtk.Template.Child()
+    cache_size_row = Gtk.Template.Child()
     server_url_row = Gtk.Template.Child()
     ai_provider_row = Gtk.Template.Child()
     ai_endpoint_row = Gtk.Template.Child()
@@ -108,6 +110,10 @@ class JTPreferences(Adw.PreferencesDialog):
         self.external_lyrics_row.set_active(
             self._settings.get_boolean("external-lyrics")
         )
+        self.discord_rpc_row.set_active(
+            self._settings.get_boolean("discord-rpc")
+        )
+        self.cache_size_row.set_value(self._settings.get_int("cache-size-mb"))
 
         url = self._settings.get_string("server-url")
         self.server_url_row.set_subtitle(url or _("Not connected"))
@@ -157,6 +163,20 @@ class JTPreferences(Adw.PreferencesDialog):
             "external-lyrics",
             self.external_lyrics_row,
             "active",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        self._settings.bind(
+            "discord-rpc",
+            self.discord_rpc_row,
+            "active",
+            Gio.SettingsBindFlags.DEFAULT,
+        )
+        # SpinRow exposes the numeric value via its internal adjustment; bind the
+        # 'i' gsetting to the adjustment's "value" so the cap persists live.
+        self._settings.bind(
+            "cache-size-mb",
+            self.cache_size_row.get_adjustment(),
+            "value",
             Gio.SettingsBindFlags.DEFAULT,
         )
         self._settings.bind(

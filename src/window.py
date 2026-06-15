@@ -353,6 +353,11 @@ class TimbreWindow(Adw.ApplicationWindow):
         self.navigation_buttons.set_sensitive(True)
         self.player_lyrics_queue.set_sensitive(True)
 
+        # Resume the previous session's queue/track/position (paused, no
+        # autoplay). Runs independently of the Home build below; the player now
+        # has a client (so it can build stream URLs) and the db is live.
+        self._restore_player_state()
+
         self._show_library_status()
 
         # Drain any deep link (jellyfin://) that arrived before login finished.
@@ -362,12 +367,18 @@ class TimbreWindow(Adw.ApplicationWindow):
             uri, self._pending_deep_link = self._pending_deep_link, None
             self.handle_deep_link(uri)
 
-        # Background incremental sync of the selected libraries.
+        # Background incremental sync of the selected libraries. Hold the same
+        # ``_refreshing`` flag the F5/Collection paths use so the Collection
+        # "Sync library" button (and F5) can't kick a redundant concurrent sync
+        # during startup — it's set here and cleared in BOTH the done and error
+        # callbacks (a startup-sync failure must never wedge the flag on).
         library_ids = list(self.settings.get_strv("selected-libraries"))
         if library_ids:
+            self._refreshing = True
             utils.run_async(
                 lambda: self._run_incremental_sync(client, library_ids),
                 on_done=self._on_startup_sync_done,
+                on_error=self._on_startup_sync_error,
                 owner=self,
             )
         else:
@@ -376,15 +387,81 @@ class TimbreWindow(Adw.ApplicationWindow):
             self._maybe_evict_cache()
         return False
 
+    # ------------------------------------------------------------------ #
+    # Resume previous session (queue / track / position / shuffle)       #
+    # ------------------------------------------------------------------ #
+
+    def _restore_player_state(self):
+        """Restore the persisted queue + current track + position (paused).
+
+        Reads the stored state off the main thread (db read), resolves the
+        stored ids to library rows in their saved order (unknown ids dropped),
+        and hands them to ``player_object.restore_state`` on the main thread,
+        which loads the current track PAUSED and seeks to the stored position.
+        Never autoplays. Empty / corrupt state is a silent no-op (already
+        logged in the parser path).
+        """
+        state = self.player_object.load_persisted_state()
+        if not state or not state["track_ids"]:
+            return
+
+        ids = state["track_ids"]
+        index = state["current_index"]
+        position = state["position"]
+        shuffle = state["shuffle"]
+        repeat = self.settings.get_int("repeat")
+
+        def work():
+            # tracks_by_ids returns rows IN THE ORDER GIVEN, dropping unknowns —
+            # exactly the resolve+drop the restore contract needs. We then clamp
+            # the saved index onto the surviving list.
+            rows = self.db.tracks_by_ids(ids)
+            return rows
+
+        def done(rows):
+            if not rows:
+                logger.info("resume: no stored tracks still in library; skipping")
+                return
+            # Re-clamp the index: ids before the saved current may have been
+            # dropped, so map the saved current id to its new position when it
+            # survived; otherwise clamp into range.
+            surviving_ids = [r["id"] for r in rows]
+            new_index = index
+            if 0 <= index < len(ids):
+                saved_current_id = ids[index]
+                if saved_current_id in surviving_ids:
+                    new_index = surviving_ids.index(saved_current_id)
+                else:
+                    new_index = min(index, len(rows) - 1)
+            new_index = max(0, min(new_index, len(rows) - 1))
+            self.player_object.restore_state(
+                rows, new_index, position, shuffle, repeat_type=repeat
+            )
+
+        utils.run_async(work, on_done=done, owner=self)
+
     def _on_startup_sync_done(self, _result):
         """Startup incremental sync completed — refresh Home, then trim cache.
 
         The disk image-cache eviction is deferred to here (the first quiet
         moment after the initial sync) so it never competes with login/sync
-        for I/O, and runs at most once per session.
+        for I/O, and runs at most once per session. Clears the ``_refreshing``
+        guard set in ``_enter_logged_in`` so a Collection/F5 sync is allowed
+        again.
         """
+        self._refreshing = False
         self._show_library_status()
         self._maybe_evict_cache()
+
+    def _on_startup_sync_error(self, _exc):
+        """Startup incremental sync raised — clear the guard so nothing wedges.
+
+        ``_run_incremental_sync`` already swallows its own exceptions, so this
+        is belt-and-suspenders: even if the worker fails some other way, the
+        ``_refreshing`` flag must not stay stuck on (which would permanently
+        block F5 and the Collection Sync button for the rest of the session).
+        """
+        self._refreshing = False
 
     def _maybe_evict_cache(self):
         """Trim the disk image cache to its budget once per app session.
@@ -401,10 +478,12 @@ class TimbreWindow(Adw.ApplicationWindow):
         img_dir = getattr(utils, "IMG_DIR", None)
         if img_dir is None:
             return
-        max_gb = utils.IMAGE_CACHE_MAX_BYTES / 1024 ** 3
 
         def work():
-            return utils.evict_cache(img_dir, max_gb)
+            # Settings-driven zero-arg wrapper: reads the cache-size setting
+            # (with the IMAGE_CACHE_MAX_BYTES fallback) so the cap can change
+            # without this call site changing.
+            return utils.evict_image_cache()
 
         def done(result):
             files, freed = result if result else (0, 0)

@@ -435,6 +435,35 @@ def fetch_image_to_path(
         return str(file_path)
 
 
+def fetch_texture_from_tag(
+    item_id: str,
+    image_tag: str | None,
+    dimensions: int = 320,
+) -> "Gdk.Texture | None":
+    """Fetch + DECODE an item's primary image to a ready ``Gdk.Texture``.
+
+    Call from a WORKER thread. This is the off-main-thread image pipeline: the
+    disk/network fetch (``fetch_image_to_path``, with its in-flight dedup) AND
+    the bytes->texture decode both happen here, so the only thing left for the
+    main loop is a cheap paintable assignment (see ``add_*_from_tag``).
+
+    ``Gdk.Texture.new_from_filename`` fully decodes the JPEG/PNG into a
+    memory-backed texture and is thread-safe for creation (proven under weston
+    by ``tests/manual/texture_threadsafe_probe.py``: 8 concurrent workers, no
+    crash, correct dimensions, main loop never stalled). Returns ``None`` when
+    there is no image on disk or the decode fails.
+    """
+    path = fetch_image_to_path(item_id, image_tag, dimensions)
+    if not path:
+        return None
+    try:
+        return Gdk.Texture.new_from_filename(path)
+    except Exception:  # noqa: BLE001 — corrupt/partial cache file -> no art
+        logger.debug("Could not decode image texture for %s", item_id,
+                     exc_info=True)
+        return None
+
+
 def add_image_from_tag(
     widget: Any,
     item_id: str,
@@ -442,17 +471,18 @@ def add_image_from_tag(
     dimensions: int = 320,
     cancellable: Gio.Cancellable | None = None,
 ) -> None:
-    """Fetch (worker-thread) an item's primary image and set it on a widget
-    that supports ``set_from_file`` (e.g. Gtk.Image). Call from a worker
-    thread; the widget mutation is marshalled back via ``GLib.idle_add``.
+    """Fetch + DECODE (worker-thread) an item's primary image and set it on a
+    widget that supports ``set_from_paintable`` (e.g. Gtk.Image). Call from a
+    worker thread; only the cheap paintable assignment is marshalled back via
+    ``GLib.idle_add`` — the decode already happened off-main.
     """
-    path = fetch_image_to_path(item_id, image_tag, dimensions)
+    texture = fetch_texture_from_tag(item_id, image_tag, dimensions)
 
     def _apply():
         if cancellable is not None and cancellable.is_cancelled():
             return False
-        if path:
-            widget.set_from_file(path)
+        if texture is not None:
+            widget.set_from_paintable(texture)
         return False
 
     GLib.idle_add(_apply)
@@ -465,15 +495,16 @@ def add_picture_from_tag(
     dimensions: int = 640,
     cancellable: Gio.Cancellable | None = None,
 ) -> None:
-    """Fetch (worker-thread) an item's primary image and set it on a widget
-    that supports ``set_filename`` (e.g. Gtk.Picture)."""
-    path = fetch_image_to_path(item_id, image_tag, dimensions)
+    """Fetch + DECODE (worker-thread) an item's primary image and set it on a
+    widget that supports ``set_paintable`` (e.g. Gtk.Picture). Only the cheap
+    paintable assignment runs on the main loop; the decode is off-main."""
+    texture = fetch_texture_from_tag(item_id, image_tag, dimensions)
 
     def _apply():
         if cancellable is not None and cancellable.is_cancelled():
             return False
-        if path:
-            widget.set_filename(path)
+        if texture is not None:
+            widget.set_paintable(texture)
         return False
 
     GLib.idle_add(_apply)
@@ -486,19 +517,18 @@ def add_avatar_from_tag(
     dimensions: int = 320,
     cancellable: Gio.Cancellable | None = None,
 ) -> None:
-    """Fetch (worker-thread) a primary image and set it as an Adw.Avatar's
-    custom image. Tag-based sibling of ``add_image_from_tag`` (the avatar API
-    needs a ``Gdk.Texture`` rather than a file path)."""
+    """Fetch + DECODE (worker-thread) a primary image and set it as an
+    Adw.Avatar's custom image. The avatar API already wants a ``Gdk.Texture``;
+    we now decode it on the worker so the main loop only does the assign."""
     if not item_id:
         return
-    path = fetch_image_to_path(item_id, image_tag, dimensions)
+    texture = fetch_texture_from_tag(item_id, image_tag, dimensions)
 
     def _apply():
         if cancellable is not None and cancellable.is_cancelled():
             return False
-        if path:
-            file = Gio.File.new_for_path(path)
-            widget.set_custom_image(Gdk.Texture.new_from_file(file))
+        if texture is not None:
+            widget.set_custom_image(texture)
         return False
 
     GLib.idle_add(_apply)
@@ -691,3 +721,44 @@ def evict_cache(cache_dir, max_gb):
         bytes_evicted += size
         logger.debug("Evicted from cache: %s", f.name)
     return (files_evicted, bytes_evicted)
+
+
+def _cache_size_mb_setting() -> int | None:
+    """Read the user's ``cache-size-mb`` GSetting, or ``None`` if unavailable.
+
+    Returns ``None`` when there is no live settings object OR the schema does
+    not declare the key (older schemas / unit tests run without it). Any
+    introspection error is swallowed and treated as "key absent" so a missing
+    key can never crash the once-per-session eviction.
+    """
+    s = settings
+    if s is None:
+        return None
+    try:
+        schema = s.get_property("settings-schema")
+        if schema is None or not schema.has_key("cache-size-mb"):
+            return None
+        return s.get_int("cache-size-mb")
+    except Exception:  # noqa: BLE001 — missing key / no schema -> use fallback
+        return None
+
+
+def evict_image_cache():
+    """Settings-driven LRU eviction of the disk image cache (zero-arg wrapper).
+
+    The cap comes from the ``cache-size-mb`` GSetting when it is available
+    (live settings object AND the key exists in the schema), otherwise it falls
+    back to the :data:`IMAGE_CACHE_MAX_BYTES` constant. Delegates the actual
+    work to :func:`evict_cache` (left unchanged — tests depend on it) against
+    ``IMG_DIR``. Pure filesystem work; call it OFF the main thread.
+
+    This is the stable entry point ``window.py`` calls for its once-per-session
+    cache trim — zero required args so the cap can change (settings) without the
+    call site changing.
+    """
+    mb = _cache_size_mb_setting()
+    if mb is not None and mb > 0:
+        max_gb = mb / 1024
+    else:
+        max_gb = IMAGE_CACHE_MAX_BYTES / 1024 ** 3
+    return evict_cache(IMG_DIR, max_gb)

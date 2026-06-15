@@ -36,6 +36,7 @@ Behavioral notes (ported from High Tide ``player_object.py``):
   Gapless prefetch in the player relies on this consistency.
 """
 
+import json
 import random
 import threading
 from enum import IntEnum
@@ -45,6 +46,79 @@ class RepeatType(IntEnum):
     NONE = 0
     SONG = 1
     LIST = 2
+
+
+# --------------------------------------------------------------------------- #
+# Resume-state (de)serialization — pure, gi-free, lives here with the rest of  #
+# the headless queue logic so it can be unit-tested without importing gi.      #
+# --------------------------------------------------------------------------- #
+
+# Current resume-state schema version (bumped if the blob shape changes).
+_STATE_VERSION = 1
+
+
+def serialize_player_state(track_ids, current_index, position, shuffle) -> str:
+    """Serialize resume state to a compact JSON string.
+
+    ``track_ids`` is the queue in CURRENT (live) order — when shuffle is on this
+    is the shuffled order, which is exactly what must be restored so playback
+    continues from the same point in the same sequence. ``position`` is the
+    playback position in seconds. ``current_index`` indexes ``track_ids``.
+    """
+    return json.dumps(
+        {
+            "v": _STATE_VERSION,
+            "track_ids": [str(t) for t in (track_ids or [])],
+            "current_index": int(current_index),
+            "position": float(position or 0.0),
+            "shuffle": bool(shuffle),
+        }
+    )
+
+
+def deserialize_player_state(blob):
+    """Parse a resume-state JSON blob into a normalized dict, or None.
+
+    Returns ``None`` for empty/corrupt input (bad JSON, wrong shape) so the
+    caller starts clean instead of crashing. On success returns a dict with
+    keys ``track_ids`` (list of str), ``current_index`` (int, clamped into the
+    bounds of ``track_ids``; -1 for an empty queue), ``position`` (float >= 0),
+    ``shuffle`` (bool). Library-membership of ids is NOT checked here (that is
+    resolved at the player boundary).
+    """
+    if not blob:
+        return None
+    try:
+        data = json.loads(blob)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    raw_ids = data.get("track_ids")
+    if not isinstance(raw_ids, list):
+        return None
+    track_ids = [str(t) for t in raw_ids if t is not None and str(t)]
+    try:
+        current_index = int(data.get("current_index", 0))
+    except (ValueError, TypeError):
+        current_index = 0
+    try:
+        position = float(data.get("position", 0.0) or 0.0)
+    except (ValueError, TypeError):
+        position = 0.0
+    if position < 0:
+        position = 0.0
+    shuffle = bool(data.get("shuffle", False))
+    if track_ids:
+        current_index = max(0, min(current_index, len(track_ids) - 1))
+    else:
+        current_index = -1
+    return {
+        "track_ids": track_ids,
+        "current_index": current_index,
+        "position": position,
+        "shuffle": shuffle,
+    }
 
 
 class PlayQueue:

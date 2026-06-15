@@ -80,5 +80,23 @@
       <default>[]</default>
     </key>
 
+    <!-- Image disk-cache size limit (MiB). utils.evict_image_cache reads this
+         (with a fallback when the key is absent) to bound the on-disk image
+         cache via an LRU sweep. -->
+    <key name="cache-size-mb" type="i">
+      <range min="64" max="8192"/>
+      <default>512</default>
+      <summary>Image cache size limit (MiB)</summary>
+      <description>Maximum size of the on-disk image cache in mebibytes. When the cache exceeds this limit the least-recently-used images are evicted.</description>
+    </key>
+
+    <!-- Discord Rich Presence: publish now-playing to a running Discord client
+         via its local IPC socket. Fail-silent when Discord is not present. -->
+    <key name="discord-rpc" type="b">
+      <default>false</default>
+      <summary>Discord Rich Presence</summary>
+      <description>Show the currently playing track in your Discord status via the local Discord client. Requires Discord to be running on the same machine; has no effect otherwise.</description>
+    </key>
+
   </schema>
 </schemalist>

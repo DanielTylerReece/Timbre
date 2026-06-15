@@ -1,0 +1,4 @@
+# List of translation languages, one ISO code per line (e.g. "de", "fr").
+# Empty for now — no translations have been contributed yet. The i18n
+# pipeline builds cleanly with zero languages; add a code here once a
+# matching <code>.po file exists in this directory.

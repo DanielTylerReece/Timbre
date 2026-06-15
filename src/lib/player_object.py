@@ -54,11 +54,30 @@ from typing import Any, List, Optional
 from gi.repository import GLib, GObject, Gst
 
 from . import utils
-from .play_queue import PlayQueue, RepeatType  # noqa: F401  (RepeatType re-export)
+from .play_queue import (  # noqa: F401  (RepeatType + codec re-export)
+    PlayQueue,
+    RepeatType,
+    deserialize_player_state,
+    serialize_player_state,
+)
 from .playback_reporter import PlaybackReporter
 from .jellyfin.models import normalize_tracks
 
 logger = logging.getLogger(__name__)
+
+# Minimum seconds between Discord presence resyncs while a track plays (no new
+# timer — piggybacks the 1s slider tick and rate-limits here). The presence end
+# timestamp drifts only on seek/pause, so a coarse resync is plenty.
+_DISCORD_RESYNC_INTERVAL = 15.0
+
+# Key in the SQLite ``meta`` table holding the resume-state JSON blob. The
+# queue can be thousands of ids, so gschema (dconf) is the wrong store; the
+# db meta key/value store keeps it next to the library it references.
+PLAYER_STATE_KEY = "player-state"
+
+# Minimum seconds between coarse position persists during playback. The persist
+# piggybacks the existing 1s slider tick (no new timer) and rate-limits here.
+_PERSIST_INTERVAL = 12.0
 
 
 class AudioSink(IntEnum):
@@ -125,6 +144,21 @@ class PlayerObject(GObject.GObject):
 
         self._reporter = PlaybackReporter(client, db)
 
+        # Discord Rich Presence — lazily constructed on first use, gated by the
+        # ``discord-rpc`` setting (read live). All socket IO is off-main inside
+        # the client; fail-silent throughout. ``_discord_last_resync`` rate-
+        # limits the periodic position resync piggybacked on the slider tick.
+        self._discord = None
+        self._discord_last_resync = None
+        if settings is not None:
+            try:
+                settings.connect(
+                    "changed::discord-rpc", self._on_discord_setting_changed
+                )
+            except Exception:
+                logger.debug("could not connect discord-rpc settings signal",
+                             exc_info=True)
+
         self.pipeline = Gst.Pipeline.new("timbre-player")
 
         self.playbin = Gst.ElementFactory.make("playbin3", "playbin")
@@ -172,6 +206,16 @@ class PlayerObject(GObject.GObject):
         # Track currently reported as started, so a track change emits stop
         # for the previous one exactly once.
         self._reported_track_id = None
+
+        # Resume-state persistence: coarse cadence guard (monotonic seconds of
+        # the last successful persist) so the 1s slider tick only writes every
+        # ``_PERSIST_INTERVAL`` seconds during playback.
+        self._last_state_persist_t = None
+        # When restoring at launch we preroll PAUSED then seek to this absolute
+        # position (seconds) on the resulting stream-start; mirrors the
+        # ``seek_after_sink_reload`` (fraction) mechanism but for an absolute
+        # restore position, and never auto-plays.
+        self._restore_seek_secs: Optional[float] = None
 
     # ------------------------------------------------------------------ #
     # GObject properties                                                 #
@@ -323,6 +367,13 @@ class PlayerObject(GObject.GObject):
         if track is None:
             return
 
+        # Restore preroll: this stream-start is the PAUSED preroll of a
+        # restored track at launch, not a real play. Seek to the stored
+        # position and emit the UI-facing signals (so the pane/MPRIS paint the
+        # restored track), but do NOT report a play / start the play-tick timer
+        # — restore must not count as a listen or autoplay.
+        restoring = self._restore_seek_secs is not None
+
         self.apply_replaygain_tags()
         self._refresh_can_go()
         self.duration = self.query_duration() or (
@@ -330,6 +381,20 @@ class PlayerObject(GObject.GObject):
         )
         self.emit("song-changed")
         self.emit("duration-changed")
+
+        if restoring:
+            target = self._restore_seek_secs
+            self._restore_seek_secs = None
+            self.playbin.seek_simple(
+                Gst.Format.TIME,
+                Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT,
+                int(target * Gst.SECOND),
+            )
+            # Precompute the gapless successor and paint the slider; stay paused.
+            self._update_prefetch()
+            self.emit("update-slider")
+            self.seeked_to_end = False
+            return
 
         # Reporting + local history (worker thread; no-op without deps).
         self._report_start(track)
@@ -359,17 +424,137 @@ class PlayerObject(GObject.GObject):
             self._report_stop()
         self._reported_track_id = track_id
         self._reporter.on_start(track_id)
+        # Mirror the reporter: publish the new track to Discord (song change).
+        self._discord_update()
 
     def _report_progress(self, paused, force=False):
         if self._reported_track_id is None:
             return
         self._reporter.on_tick(self.position_ticks(), paused, force=force)
+        # Mirror the reporter's tick: on a forced report (seek / play-pause
+        # flip) push presence now; otherwise coarse-resync the end timestamp.
+        if force:
+            self._discord_update()
+        else:
+            self._discord_resync()
 
     def _report_stop(self):
         if self._reported_track_id is None:
             return
         self._reporter.on_stop(self.position_ticks())
         self._reported_track_id = None
+        # Mirror the reporter: a stop clears the Discord presence too.
+        self._discord_clear()
+
+    # ------------------------------------------------------------------ #
+    # Discord Rich Presence (mirrors the reporter drive points)          #
+    # ------------------------------------------------------------------ #
+
+    def _discord_enabled(self) -> bool:
+        """True iff the discord-rpc setting is on (settings may be None)."""
+        if self._settings is None:
+            return False
+        try:
+            return self._settings.get_boolean("discord-rpc")
+        except Exception:
+            return False
+
+    def _ensure_discord(self):
+        """Lazily build the RPC client when first needed. Returns it or None."""
+        if self._discord is None:
+            try:
+                from .discord_rpc import DiscordRPC
+
+                self._discord = DiscordRPC()
+            except Exception:
+                logger.debug("could not create Discord RPC client",
+                             exc_info=True)
+                self._discord = None
+        return self._discord
+
+    def _discord_large_image(self) -> Optional[str]:
+        """A reachable artwork URL for Discord, or None.
+
+        Discord's ``large_image`` accepts an https URL, but Tyler's Jellyfin
+        server is a LAN box that is usually NOT publicly reachable and the
+        primary-image URL carries an api_key — so we only offer artwork when the
+        server URL is https (a reasonable proxy for "reachable from Discord's
+        CDN fetcher"); otherwise we omit it and Discord shows the activity with
+        no asset. Conservative by design: a wrong URL just yields no art.
+        """
+        client = self._client
+        track = self.playing_track
+        if client is None or track is None:
+            return None
+        base = getattr(client, "base", "") or ""
+        if not base.startswith("https://"):
+            return None
+        track_id = getattr(track, "id", None)
+        if not track_id:
+            return None
+        return f"{base}/Items/{track_id}/Images/Primary"
+
+    def _discord_update(self):
+        """Push the current track to Discord if enabled (fail-silent)."""
+        if not self._discord_enabled():
+            return
+        track = self.playing_track
+        if track is None:
+            return
+        rpc = self._ensure_discord()
+        if rpc is None:
+            return
+        duration_secs = (self.duration / Gst.SECOND) if self.duration else None
+        if not duration_secs:
+            ticks = _track_duration_ticks(track)
+            duration_secs = (ticks / 1e7) if ticks else None
+        try:
+            rpc.update(
+                getattr(track, "name", None),
+                getattr(track, "artist_name", None),
+                duration_secs=duration_secs,
+                position_secs=self._current_position_secs(),
+                large_image=self._discord_large_image(),
+                large_text=getattr(track, "album_name", None),
+            )
+        except Exception:
+            logger.debug("discord update failed", exc_info=True)
+        self._discord_last_resync = GLib.get_monotonic_time() / 1_000_000.0
+
+    def _discord_resync(self):
+        """Coarse periodic resync of the presence (rate-limited)."""
+        if not self._discord_enabled() or self._discord is None:
+            return
+        now = GLib.get_monotonic_time() / 1_000_000.0
+        if (
+            self._discord_last_resync is not None
+            and (now - self._discord_last_resync) < _DISCORD_RESYNC_INTERVAL
+        ):
+            return
+        self._discord_update()
+
+    def _discord_clear(self):
+        """Clear the presence if a client exists (no-op otherwise)."""
+        if self._discord is None:
+            return
+        try:
+            self._discord.clear()
+        except Exception:
+            logger.debug("discord clear failed", exc_info=True)
+        self._discord_last_resync = None
+
+    def _on_discord_setting_changed(self, *args):
+        """React live to the discord-rpc toggle.
+
+        OFF -> clear the presence immediately. ON -> if a track is playing,
+        push it right away so the user sees presence appear without waiting for
+        the next track change.
+        """
+        if self._discord_enabled():
+            if self._reported_track_id is not None:
+                self._discord_update()
+        else:
+            self._discord_clear()
 
     def position_ticks(self) -> int:
         """Current playback position in 100ns ticks (Jellyfin units).
@@ -504,6 +689,9 @@ class PlayerObject(GObject.GObject):
         self.playing = True
         self.pipeline.set_state(Gst.State.PLAYING)
         self._report_progress(paused=False)
+        # Play/pause is a presence event: refresh so Discord's timestamp tracks
+        # the resumed position (only does wire IO when actually enabled).
+        self._discord_update()
         if self.update_timer:
             GLib.source_remove(self.update_timer)
         self.update_timer = GLib.timeout_add(1000, self._update_slider_callback)
@@ -513,6 +701,11 @@ class PlayerObject(GObject.GObject):
         self.playing = False
         self.pipeline.set_state(Gst.State.PAUSED)
         self._report_progress(paused=True)
+        # Mirror play(): refresh presence so the (now frozen) position is shown.
+        self._discord_update()
+        # Pause is a natural checkpoint: persist resume state immediately so a
+        # crash/kill while paused doesn't lose the position.
+        self._persist_state(force=True)
 
     def play_pause(self) -> None:
         if self.playing:
@@ -700,6 +893,9 @@ class PlayerObject(GObject.GObject):
         self.emit("update-slider")
         # Periodic progress report (reporter rate-limits to >=10s itself).
         self._report_progress(paused=not self.playing)
+        # Coarse resume-state persist piggybacked on this existing tick (no new
+        # timer); rate-limited internally to >= _PERSIST_INTERVAL.
+        self._persist_state()
         if self.playing:
             self.update_timer = GLib.timeout_add(1000, self._update_slider_callback)
         return False
@@ -727,6 +923,140 @@ class PlayerObject(GObject.GObject):
         self._report_progress(paused=not self.playing, force=True)
 
     # ------------------------------------------------------------------ #
+    # Resume-state persistence + restore                                 #
+    # ------------------------------------------------------------------ #
+
+    def _current_position_secs(self) -> float:
+        """Best-effort current playback position in seconds (>=0)."""
+        return max(0, self.query_position()) / Gst.SECOND
+
+    def _persist_state(self, force: bool = False) -> None:
+        """Persist the live queue / index / position / shuffle to the db.
+
+        Called from the MAIN loop (slider tick, pause, shutdown) — never the
+        GStreamer streaming thread. The actual write goes through
+        ``db.meta_set`` which marshals onto the db writer thread, so no db work
+        runs on the main thread beyond enqueueing. Rate-limited to
+        ``_PERSIST_INTERVAL`` unless ``force`` (pause / quit).
+
+        An empty queue clears the stored state so a fresh start next launch
+        doesn't restore a stale queue.
+        """
+        if self._db is None:
+            return
+        now = GLib.get_monotonic_time() / 1_000_000.0
+        if (
+            not force
+            and self._last_state_persist_t is not None
+            and (now - self._last_state_persist_t) < _PERSIST_INTERVAL
+        ):
+            return
+        self._last_state_persist_t = now
+
+        tracks = self.queue.tracks  # snapshot (live order)
+        track_ids = [getattr(t, "id", None) for t in tracks]
+        track_ids = [tid for tid in track_ids if tid]
+        if not track_ids:
+            blob = serialize_player_state([], -1, 0.0, self.queue.shuffle)
+        else:
+            blob = serialize_player_state(
+                track_ids,
+                self.queue.current_index,
+                self._current_position_secs(),
+                self.queue.shuffle,
+            )
+        try:
+            self._db.meta_set(PLAYER_STATE_KEY, blob)
+        except Exception:
+            logger.debug("failed to persist player state", exc_info=True)
+
+    def load_persisted_state(self):
+        """Read + parse the stored resume state from the db (or None).
+
+        Pure read off the stored blob; returns the normalized dict from
+        :func:`deserialize_player_state` (ids NOT yet resolved against the
+        library) or ``None`` when there is nothing / it is corrupt. Safe to
+        call before login.
+        """
+        if self._db is None:
+            return None
+        try:
+            blob = self._db.meta_get(PLAYER_STATE_KEY)
+        except Exception:
+            logger.debug("failed to read player state", exc_info=True)
+            return None
+        return deserialize_player_state(blob)
+
+    def restore_state(self, tracks, current_index, position_secs, shuffle,
+                      repeat_type=None) -> bool:
+        """Rebuild the queue from resolved tracks and load PAUSED at position.
+
+        ``tracks`` is the already-resolved, library-validated list (ids no
+        longer present were dropped by the caller); it is normalized through
+        the player boundary here per the cardinal rule. The current track is
+        loaded and SEEKED to ``position_secs`` but left PAUSED — restore never
+        autoplays. Shuffle/repeat are applied to the live queue WITHOUT
+        re-shuffling (the saved order is the live order). Re-arms gapless
+        prefetch. Returns True if a track was loaded, False if nothing to
+        restore.
+
+        IMPORTANT: ``shuffle`` is set directly on the queue's backing flag (not
+        via the player ``shuffle`` setter) so the saved order is preserved —
+        the setter would re-run ``_apply_shuffle`` and reshuffle. Unshuffle
+        history is intentionally NOT restored (see module/test notes), so a
+        post-restore shuffle-OFF keeps the current live order.
+        """
+        tracks = normalize_tracks(tracks)
+        if not tracks:
+            return False
+        n = len(tracks)
+        idx = max(0, min(int(current_index), n - 1))
+
+        # Build the queue with the EXACT saved order. set_tracks would re-apply
+        # shuffle if the flag were already on, so set the order first with
+        # shuffle off, then flip the backing flag directly to mark the state
+        # without reshuffling.
+        self.queue.set_tracks(tracks, idx)
+        if shuffle:
+            with self.queue._lock:
+                self.queue._shuffle = True
+                self.queue._original_order = []
+        else:
+            with self.queue._lock:
+                self.queue._shuffle = False
+        if repeat_type is not None:
+            self.queue.repeat_type = RepeatType(repeat_type)
+        self.notify("shuffle")
+        self.notify("repeat-type")
+
+        track = self.queue.current
+        if track is None:
+            return False
+
+        # Load PAUSED + seek-on-preroll. Mirror _load_track_uri's non-gapless
+        # path but transition to PAUSED (not PLAYING) so the stream prerolls
+        # (enabling the seek in _on_track_start) without starting audio.
+        self.playing = False
+        self._restore_seek_secs = max(0.0, float(position_secs or 0.0))
+        uri = self._resolve_uri(track)
+        if uri is None:
+            logger.warning("restore: no stream URI for current track")
+            return False
+        self.use_about_to_finish = False
+        self.pipeline.set_state(Gst.State.NULL)
+        self.playbin.set_property("uri", uri)
+        self.pipeline.set_state(Gst.State.PAUSED)
+        self.use_about_to_finish = True
+
+        self._refresh_can_go()
+        self._update_prefetch()
+        logger.info(
+            "restored queue: %d tracks, index %d, pos %.1fs, shuffle=%s",
+            n, idx, self._restore_seek_secs, bool(shuffle),
+        )
+        return True
+
+    # ------------------------------------------------------------------ #
     # Lifecycle                                                          #
     # ------------------------------------------------------------------ #
 
@@ -739,10 +1069,23 @@ class PlayerObject(GObject.GObject):
         Safe to call when nothing is playing — ``_report_stop`` is a no-op when
         no track is active.
         """
+        # Persist resume state one last time before everything tears down, so a
+        # real quit (app.quit / SIGTERM) restores exactly where we left off.
+        # This is the quit/shutdown flush path (NOT the close-to-tray path,
+        # which keeps the window hidden and playback running).
+        self._persist_state(force=True)
         # Final stop for the in-flight track (carries current position ticks).
         self._report_stop()
         self._reporter.flush()
         self._reporter.close()
+        # Clear + tear down the Discord presence (sends CLOSE, joins worker).
+        if self._discord is not None:
+            try:
+                self._discord.clear()
+                self._discord.close()
+            except Exception:
+                logger.debug("error during Discord RPC shutdown", exc_info=True)
+            self._discord = None
         # Release the audio device / pipeline resources.
         try:
             self.pipeline.set_state(Gst.State.NULL)

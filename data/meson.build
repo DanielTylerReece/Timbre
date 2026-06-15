@@ -1,12 +1,11 @@
-# i18n deferred to post-1.0; desktop/appdata files installed directly without po merge
-desktop_file = configure_file(
+# Desktop entry: merge translations from po/ into the installed .desktop.
+desktop_file = i18n.merge_file(
         input: 'io.github.tylerreece.timbre.desktop.in',
        output: 'io.github.tylerreece.timbre.desktop',
-  copy: true,
-)
-install_data(
-  desktop_file,
-  install_dir: join_paths(get_option('datadir'), 'applications')
+         type: 'desktop',
+       po_dir: '../po',
+      install: true,
+  install_dir: join_paths(get_option('datadir'), 'applications'),
 )
 
 blueprints = custom_target('blueprints',
@@ -22,6 +21,7 @@ blueprints = custom_target('blueprints',
     'ui/widgets/queue_widget.blp',
     'ui/widgets/queue_row.blp',
     'ui/widgets/generic_track_widget.blp',
+    'ui/widgets/track_row_widget.blp',
     'ui/widgets/lyrics_widget.blp',
     'ui/widgets/auto_load_widget.blp',
     'ui/window.blp',
@@ -47,14 +47,14 @@ if desktop_utils.found()
   test('Validate desktop file', desktop_utils, args: [desktop_file])
 endif
 
-appstream_file = configure_file(
+# AppStream metadata: merge translations from po/ into the installed appdata.
+appstream_file = i18n.merge_file(
         input: 'io.github.tylerreece.timbre.appdata.xml.in',
        output: 'io.github.tylerreece.timbre.appdata.xml',
-  copy: true,
-)
-install_data(
-  appstream_file,
-  install_dir: join_paths(get_option('datadir'), 'metainfo')
+         type: 'xml',
+       po_dir: '../po',
+      install: true,
+  install_dir: join_paths(get_option('datadir'), 'metainfo'),
 )
 
 appstream_util = find_program('appstream-util', required: false)

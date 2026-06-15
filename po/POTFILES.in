@@ -1,0 +1,58 @@
+# List of source files containing translatable strings.
+# Paths are relative to the project root (the directory containing meson.build).
+# Regenerate the audit with:
+#   grep -rlE "_\(['\"]" src --include='*.py'        # python
+#   grep -rlE "_\(['\"]|C_\(['\"]" data --include='*.blp'  # blueprint
+# Blueprint (.blp) files are extracted directly: their _("...") / C_("ctx","...")
+# syntax is C-like, so xgettext's C lexer (via the meson 'glib' preset) reads them.
+
+# --- Desktop entry / AppStream metadata (translatable fields) ---
+data/io.github.tylerreece.timbre.desktop.in
+data/io.github.tylerreece.timbre.appdata.xml.in
+
+# --- Blueprint UI definitions ---
+data/shortcuts-dialog.blp
+data/ui/new_playlist.blp
+data/ui/onboarding.blp
+data/ui/pages_ui/artist_page_template.blp
+data/ui/pages_ui/mix_page_template.blp
+data/ui/pages_ui/page_template.blp
+data/ui/pages_ui/tracks_list_template.blp
+data/ui/preferences.blp
+data/ui/widgets/carousel_widget.blp
+data/ui/widgets/generic_track_widget.blp
+data/ui/widgets/lyrics_widget.blp
+data/ui/widgets/queue_row.blp
+data/ui/widgets/queue_widget.blp
+data/ui/widgets/track_row_widget.blp
+data/ui/window.blp
+
+# --- Python sources ---
+src/ai_model_widgets.py
+src/main.py
+src/onboarding.py
+src/preferences.py
+src/window.py
+src/lib/player_object.py
+src/lib/utils.py
+src/pages/album_page.py
+src/pages/artist_page.py
+src/pages/collection_page.py
+src/pages/decade_page.py
+src/pages/explore_page.py
+src/pages/genre_page.py
+src/pages/home_page.py
+src/pages/mix_page.py
+src/pages/page.py
+src/pages/playlist_page.py
+src/pages/search_page.py
+src/pages/track_list_page.py
+src/widgets/auto_load_widget.py
+src/widgets/card_widget.py
+src/widgets/generic_track_widget.py
+src/widgets/lyrics_widget.py
+src/widgets/player_pane.py
+src/widgets/queue_row.py
+src/widgets/queue_widget.py
+src/widgets/track_row_widget.py
+src/widgets/wide_card_widget.py
