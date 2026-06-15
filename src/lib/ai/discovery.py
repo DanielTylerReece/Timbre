@@ -52,6 +52,17 @@ _SYSTEM_SELECT = (
 )
 
 
+def _catalog_block(catalog_text):
+    """The cacheable prefix block wrapping a formatted catalog string.
+
+    Stable across every call within one Home rebuild (the same catalog string
+    is threaded through the daily-mix call and every personal-radio call), so it
+    serves as the prompt-cache prefix. The volatile per-call instruction is sent
+    separately as the user message and never mutates this block.
+    """
+    return f"CANDIDATES:\n{catalog_text}"
+
+
 def _parse_dt(s):
     """Parse an ISO timestamp (tolerant of a trailing 'Z')."""
     if not s:
@@ -90,6 +101,20 @@ class Discovery:
     # Internal helpers                                                   #
     # ------------------------------------------------------------------ #
 
+    def build_profile_candidates(self):
+        """Build the profile candidate catalog ONCE for a Home rebuild.
+
+        The Home refresh path calls this a single time and threads the returned
+        list into BOTH :meth:`daily_mixes` and :meth:`personal_radios` so the
+        formatted catalog string is byte-identical across the daily-mix call and
+        every per-radio call — the prerequisite for prompt-cache hits across the
+        burst. ``candidates_for_profile``'s ``RANDOM()`` fill means a fresh build
+        differs every call, so building once and sharing is required (do NOT call
+        it independently per feature, or the prefix diverges and nothing caches).
+        Returns a list of track dicts (possibly empty).
+        """
+        return catalog.candidates_for_profile(self.db)
+
     def _provider(self):
         try:
             return self._provider_factory()
@@ -107,11 +132,15 @@ class Discovery:
         response had no usable ids, or under 50% validated — the caller then
         falls back. ``candidates`` is the catalog track-dict list.
         """
+        # Catalog goes through the cacheable prefix channel; only the volatile
+        # instruction is the user message. Seed/instant-mix catalogs are never
+        # reused across calls so caching is moot here, but the ordering is
+        # harmless and keeps every prompt shape consistent with the profile path.
         cat_text = catalog.format_catalog(candidates)
-        user = f"{instruction}\n\nCANDIDATES:\n{cat_text}"
         try:
             data = provider.complete_json(
-                _SYSTEM_SELECT, user, max_tokens=max_tokens
+                _SYSTEM_SELECT, instruction, max_tokens=max_tokens,
+                cache_prefix=_catalog_block(cat_text),
             )
         except AIError:
             logger.info("AI select failed; falling back", exc_info=True)
@@ -225,7 +254,7 @@ class Discovery:
     # Daily mixes                                                        #
     # ------------------------------------------------------------------ #
 
-    def daily_mixes(self, force=False):
+    def daily_mixes(self, force=False, candidates=None):
         """Four daily mixes ``[{name, description, track_ids}]``.
 
         Rebuilt only when ``meta['mixes_built_date'] != today``; otherwise served
@@ -238,6 +267,14 @@ class Discovery:
         re-stamps today's date so the daily logic stays coherent; if the rebuild
         yields nothing (it should not — fallback always fills) the previous
         cached set and its stamp are left untouched so the section never blanks.
+
+        ``candidates`` lets a caller pass a pre-built profile catalog so the SAME
+        catalog string is shared with :meth:`personal_radios` within one Home
+        rebuild — that byte-identical prefix is what lets prompt caching hit
+        across the daily-mix call and every per-radio call. When omitted it is
+        built once here (``candidates_for_profile``). The ``RANDOM()`` fill in
+        that builder is intentional cross-rebuild variety; sharing one list keeps
+        it stable only WITHIN a rebuild.
         """
         today = self._today()
         if not force and self.db.meta_get("mixes_built_date") == today:
@@ -248,7 +285,7 @@ class Discovery:
         provider = self._provider()
         mixes = None
         if provider is not None:
-            mixes = self._build_mixes_ai(provider)
+            mixes = self._build_mixes_ai(provider, candidates=candidates)
         if not mixes:
             mixes = self._mixes_fallback()
         # Defensive: a forced rebuild must never overwrite the cache (and stamp)
@@ -289,7 +326,7 @@ class Discovery:
         ("On shuffle", "A broad spread across your library"),
     )
 
-    def _build_mixes_ai(self, provider):
+    def _build_mixes_ai(self, provider, candidates=None):
         """Build all four daily mixes in ONE provider call.
 
         The candidate catalog is serialized exactly once (the whole point — a
@@ -297,8 +334,12 @@ class Discovery:
         lists all four themes and asks for every mix in one JSON response; each
         mix's ids are then validated and degraded independently, matching the
         per-mix safety of the old per-theme path exactly.
+
+        ``candidates`` may be a pre-built profile list shared with the radio
+        build (for cross-call prompt caching); otherwise it is built here.
         """
-        candidates = catalog.candidates_for_profile(self.db)
+        if candidates is None:
+            candidates = catalog.candidates_for_profile(self.db)
         if not candidates:
             return None
         summary = catalog.profile_summary(self.db)
@@ -327,9 +368,15 @@ class Discovery:
         # fall through to the heuristic set below (truncation collapses ALL four
         # mixes to the fallback rather than salvaging the parseable prefix —
         # safe, just less granular than the per-mix degrade on a valid response).
+        # Catalog -> cacheable prefix; only the (volatile) instruction is the
+        # user message. Formatting the catalog string once and reusing it (here
+        # and in every radio call within the same rebuild) is what makes the
+        # prefix byte-identical across the burst -> cache hits.
+        catalog_text = catalog.format_catalog(candidates)
         try:
             data = provider.complete_json(
-                _SYSTEM_SELECT, _wrap(instruction, candidates), max_tokens=4000
+                _SYSTEM_SELECT, instruction, max_tokens=4000,
+                cache_prefix=_catalog_block(catalog_text),
             )
         except Exception:  # noqa: BLE001 — any provider bug -> heuristic set
             logger.info("AI daily-mix build failed", exc_info=True)
@@ -389,17 +436,23 @@ class Discovery:
                 desc_hint
         return {"name": name, "description": description, "track_ids": valid}
 
-    def _build_named_mix(self, provider, candidates, instruction,
+    def _build_named_mix(self, provider, cache_prefix, instruction,
                          name_hint, desc_hint, size):
         """Run one name+description+ids mix prompt; validate; degrade safely.
 
         Still used by :meth:`_build_radios_ai` (one prompt per radio station).
         The daily-mix path no longer uses it — it builds all four mixes in a
         single call via :meth:`_build_mixes_ai`.
+
+        ``cache_prefix`` is the already-formatted catalog block (built once per
+        rebuild and shared across every radio call), passed through the
+        provider's cacheable-prefix channel so the per-station calls hit the
+        prompt cache. Only ``instruction`` is the volatile user message.
         """
         try:
-            data = provider.complete_json(_SYSTEM_SELECT, _wrap(instruction,
-                                                                 candidates))
+            data = provider.complete_json(
+                _SYSTEM_SELECT, instruction, cache_prefix=cache_prefix
+            )
         except Exception:  # noqa: BLE001
             logger.info("AI mix build failed", exc_info=True)
             return {"name": name_hint, "description": desc_hint, "track_ids": []}
@@ -463,12 +516,18 @@ class Discovery:
     # Personal radios                                                    #
     # ------------------------------------------------------------------ #
 
-    def personal_radios(self):
+    def personal_radios(self, candidates=None):
         """Three personal radio stations ``[{name, description, track_ids}]``.
 
         Cached weekly (``personal_radio`` keys '1'..'3'); rebuilt when the
         cached rows are older than 7 days. Heuristic fallback (top artists /
         genres) when no provider or on AI failure.
+
+        ``candidates`` lets a caller pass the SAME pre-built profile catalog used
+        by :meth:`daily_mixes` in one Home rebuild, so the formatted catalog
+        string is byte-identical across the mix call and every per-radio call —
+        the prerequisite for prompt-cache hits. When omitted it is built once
+        here.
         """
         if self._radios_fresh():
             cached = self._load_cached_set("personal_radio", _RADIO_COUNT)
@@ -478,7 +537,7 @@ class Discovery:
         provider = self._provider()
         radios = None
         if provider is not None:
-            radios = self._build_radios_ai(provider)
+            radios = self._build_radios_ai(provider, candidates=candidates)
         if not radios:
             radios = self._radios_fallback()
 
@@ -533,11 +592,17 @@ class Discovery:
             ]
         )
 
-    def _build_radios_ai(self, provider):
+    def _build_radios_ai(self, provider, candidates=None):
         seeds = self._top_artist_seeds(_RADIO_COUNT)
         if not seeds:
             return None
-        candidates = catalog.candidates_for_profile(self.db)
+        if candidates is None:
+            candidates = catalog.candidates_for_profile(self.db)
+        # Format the shared catalog ONCE into the cacheable prefix block; every
+        # per-station call reuses the identical string so the catalog is written
+        # to the prompt cache on the first call and read on the rest (and, when
+        # daily_mixes shares the same `candidates`, the mix call primes it too).
+        cache_prefix = _catalog_block(catalog.format_catalog(candidates))
         out = []
         for artist_id, artist_name in seeds:
             name_hint = f"{artist_name or 'Artist'} Radio"
@@ -549,7 +614,7 @@ class Discovery:
                 f"{{\"name\": str, \"description\": str, \"track_ids\": [...]}}."
             )
             out.append(self._build_named_mix(
-                provider, candidates, instruction, name_hint, desc_hint,
+                provider, cache_prefix, instruction, name_hint, desc_hint,
                 _RADIO_SIZE,
             ))
         if all(not r["track_ids"] for r in out):
@@ -812,11 +877,6 @@ class Discovery:
                 return None
             out.append(payload)
         return out
-
-
-def _wrap(instruction, candidates):
-    """Compose the user prompt: instruction + the formatted candidate catalog."""
-    return f"{instruction}\n\nCANDIDATES:\n{catalog.format_catalog(candidates)}"
 
 
 def _import_track_model():

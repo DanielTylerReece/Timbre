@@ -295,8 +295,17 @@ class HTHomePage(Page):
             self._set_section_updating(self._radios_box, True)
 
         def work():
-            mixes = disc.daily_mixes() if need_mixes else None
-            radios = disc.personal_radios() if need_radios else None
+            # Build the profile candidate catalog ONCE and share it across both
+            # the mix and radio builds so the formatted catalog string is byte-
+            # identical across the whole burst of provider calls — that shared
+            # prefix is what lets prompt caching write the catalog once and read
+            # it cheaply on every subsequent call this rebuild. Built only when
+            # at least one section actually needs an AI rebuild.
+            shared = disc.build_profile_candidates() \
+                if (need_mixes or need_radios) else None
+            mixes = disc.daily_mixes(candidates=shared) if need_mixes else None
+            radios = disc.personal_radios(candidates=shared) if need_radios \
+                else None
             return mixes, radios
 
         def done(result):

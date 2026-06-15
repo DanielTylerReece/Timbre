@@ -69,11 +69,21 @@ class AIProvider(ABC):
     """Abstract base: turn a system+user prompt into parsed JSON."""
 
     @abstractmethod
-    def complete_json(self, system: str, user: str, max_tokens: int = 2000):
+    def complete_json(self, system: str, user: str, max_tokens: int = 2000,
+                      cache_prefix: str | None = None):
         """Return parsed JSON (dict | list).
 
         Raises :class:`AIError` on HTTP/parse failure (one retry with a
         'Return ONLY valid JSON' nudge before giving up).
+
+        ``cache_prefix`` is an optional large, STABLE block of context (e.g. the
+        candidate catalog) that callers want to reuse byte-for-byte across a
+        burst of calls. When provided it is placed as a cacheable PREFIX (ahead
+        of the volatile ``user`` instruction) so prompt caching can hit it:
+        Anthropic marks it with ``cache_control: ephemeral``; OpenAI-compatible
+        endpoints cache long identical prefixes automatically. The volatile
+        instruction — and the JSON-retry nudge — stay in the suffix so the
+        cached prefix is identical between the first call and the retry.
         """
         raise NotImplementedError
 
@@ -115,11 +125,23 @@ class OpenAIProvider(AIProvider):
             raise AIError(f"transport error: {e}") from e
         return resp
 
-    def complete_json(self, system: str, user: str, max_tokens: int = 2000):
+    def complete_json(self, system: str, user: str, max_tokens: int = 2000,
+                      cache_prefix: str | None = None):
         self._max_tokens = max_tokens
+        # OpenAI-compatible endpoints (OpenAI, llama.cpp, OpenRouter, …) cache
+        # long identical PREFIXES automatically — no API param to set. So when a
+        # cache_prefix is supplied, prepend it to the user content (catalog
+        # FIRST, volatile instruction LAST) so the stable bytes form the prefix
+        # the server can reuse across the burst of calls that share them. The
+        # JSON-retry below re-sends the identical prefix + nudged suffix, so the
+        # retry is itself a cache hit.
+        if cache_prefix:
+            user_content = f"{cache_prefix}\n\n{user}"
+        else:
+            user_content = user
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": user},
+            {"role": "user", "content": user_content},
         ]
         use_rf = True
         resp = self._post(messages, use_response_format=use_rf)
@@ -134,8 +156,9 @@ class OpenAIProvider(AIProvider):
             return _parse_json(content)
         except ValueError:
             logger.debug("OpenAI JSON parse failed; retrying with nudge")
-        # One retry with the nudge appended to the user message.
-        messages[-1] = {"role": "user", "content": user + _JSON_NUDGE}
+        # One retry with the nudge appended to the VOLATILE suffix only, leaving
+        # the cache_prefix byte-identical so the retry re-hits the cached prefix.
+        messages[-1] = {"role": "user", "content": user_content + _JSON_NUDGE}
         resp = self._post(messages, use_response_format=use_rf)
         if resp.status_code >= 400:
             raise AIError(f"HTTP {resp.status_code}: {(resp.text or '')[:200]}")
@@ -170,11 +193,31 @@ class AnthropicProvider(AIProvider):
         # by diagnostics; never logged automatically.
         self._last_usage = None
 
-    def _post(self, system, user, max_tokens):
+    def _post(self, system, user, max_tokens, cache_prefix=None):
+        # When a cache_prefix is supplied, build `system` as a LIST of content
+        # blocks: the stable instruction text, then the large stable prefix
+        # (the catalog) carrying cache_control: ephemeral. This caches
+        # system+catalog together with the breakpoint on the catalog block; the
+        # volatile instruction stays in the user message so it never breaks the
+        # cached prefix. Anthropic accepts a string OR a list for `system`, so
+        # the plain-string path (cache_prefix=None) is preserved unchanged.
+        # ephemeral cache_control is GA on the standard /v1/messages endpoint —
+        # no beta header required.
+        if cache_prefix:
+            system_field = [
+                {"type": "text", "text": system},
+                {
+                    "type": "text",
+                    "text": cache_prefix,
+                    "cache_control": {"type": "ephemeral"},
+                },
+            ]
+        else:
+            system_field = system
         body = {
             "model": self.model,
             "max_tokens": max_tokens,
-            "system": system,
+            "system": system_field,
             "messages": [{"role": "user", "content": user}],
         }
         headers = {
@@ -195,14 +238,18 @@ class AnthropicProvider(AIProvider):
             raise AIError(f"HTTP {resp.status_code}: {(resp.text or '')[:200]}")
         return resp
 
-    def complete_json(self, system: str, user: str, max_tokens: int = 2000):
-        resp = self._post(system, user, max_tokens)
+    def complete_json(self, system: str, user: str, max_tokens: int = 2000,
+                      cache_prefix: str | None = None):
+        resp = self._post(system, user, max_tokens, cache_prefix=cache_prefix)
         content = self._extract(resp)
         try:
             return _parse_json(content)
         except ValueError:
             logger.debug("Anthropic JSON parse failed; retrying with nudge")
-        resp = self._post(system, user + _JSON_NUDGE, max_tokens)
+        # Retry: only the volatile user suffix gains the nudge; system +
+        # cache_prefix are byte-identical, so the retry re-reads the cache.
+        resp = self._post(system, user + _JSON_NUDGE, max_tokens,
+                          cache_prefix=cache_prefix)
         content = self._extract(resp)
         try:
             return _parse_json(content)
