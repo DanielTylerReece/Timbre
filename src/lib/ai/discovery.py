@@ -279,55 +279,131 @@ class Discovery:
         """True when the daily mixes were last built before today."""
         return self.db.meta_get("mixes_built_date") != self._today()
 
+    # The four daily-mix themes (name hint + description hint). The order and
+    # names are load-bearing: the UI and the 'mix' cache keys '1'..'4' assume
+    # exactly four mixes in this order.
+    _MIX_THEMES = (
+        ("Heavy rotation", "Your most-played, freshly sequenced"),
+        ("Rediscover", "Favorites you haven't heard in a while"),
+        ("Deep cuts", "Lesser-played gems from artists you love"),
+        ("On shuffle", "A broad spread across your library"),
+    )
+
     def _build_mixes_ai(self, provider):
+        """Build all four daily mixes in ONE provider call.
+
+        The candidate catalog is serialized exactly once (the whole point — a
+        prior version sent it once per theme, 4x per rebuild). The single prompt
+        lists all four themes and asks for every mix in one JSON response; each
+        mix's ids are then validated and degraded independently, matching the
+        per-mix safety of the old per-theme path exactly.
+        """
         candidates = catalog.candidates_for_profile(self.db)
         if not candidates:
             return None
         summary = catalog.profile_summary(self.db)
-        themes = [
-            ("Heavy rotation", "Your most-played, freshly sequenced"),
-            ("Rediscover", "Favorites you haven't heard in a while"),
-            ("Deep cuts", "Lesser-played gems from artists you love"),
-            ("On shuffle", "A broad spread across your library"),
-        ]
-        out = []
-        for name_hint, desc_hint in themes:
-            instruction = (
-                f"Listener profile:\n{summary}\n\n"
-                f"Build a {_MIX_SIZE}-track mix themed '{name_hint}' "
-                f"({desc_hint}). Pick ids only from CANDIDATES. Return JSON "
-                f"{{\"name\": str, \"description\": str, \"track_ids\": [...]}}."
+        themes = self._MIX_THEMES
+
+        theme_lines = "\n".join(
+            f"{i}. \"{name}\" — {desc}"
+            for i, (name, desc) in enumerate(themes, start=1)
+        )
+        instruction = (
+            f"Listener profile:\n{summary}\n\n"
+            f"Build {_MIX_COUNT} distinct daily mixes, one for each theme below. "
+            f"Give each mix about {_MIX_SIZE} track ids. Keep the four mixes "
+            "meaningfully distinct from one another rather than overlapping "
+            "heavily. Pick ids ONLY from CANDIDATES — never invent or modify an "
+            "id.\n\n"
+            f"Themes (return the mixes in this order):\n{theme_lines}\n\n"
+            "Return JSON of the form "
+            "{\"mixes\": [{\"name\": str, \"description\": str, "
+            "\"track_ids\": [...]}, ...]} with one object per theme, in order."
+        )
+        # Bump max_tokens: four mixes × ~20 ids in one response needs more room
+        # than the per-mix default (2000) used by single-mix prompts. ~80 GUID
+        # ids + names/descriptions is ~1.5k tokens, so 4000 leaves ~2x headroom.
+        # If the model still clips the JSON, complete_json's parse fails and we
+        # fall through to the heuristic set below (truncation collapses ALL four
+        # mixes to the fallback rather than salvaging the parseable prefix —
+        # safe, just less granular than the per-mix degrade on a valid response).
+        try:
+            data = provider.complete_json(
+                _SYSTEM_SELECT, _wrap(instruction, candidates), max_tokens=4000
             )
-            mix = self._build_named_mix(provider, candidates, instruction,
-                                        name_hint, desc_hint, _MIX_SIZE)
-            out.append(mix)
-        # If every AI mix collapsed to a fallback with no ids, signal failure so
-        # the caller uses the richer heuristic set instead.
+        except Exception:  # noqa: BLE001 — any provider bug -> heuristic set
+            logger.info("AI daily-mix build failed", exc_info=True)
+            return None
+
+        raw_mixes = self._extract_mixes(data)
+
+        out = []
+        for i, (name_hint, desc_hint) in enumerate(themes):
+            raw = raw_mixes[i] if i < len(raw_mixes) else None
+            out.append(self._mix_from_raw(raw, name_hint, desc_hint, _MIX_SIZE))
+
+        # If every mix collapsed to no ids, signal failure so the caller uses
+        # the richer heuristic set instead (same as the old all-empty check).
         if all(not m["track_ids"] for m in out):
             return None
         return out
 
-    def _build_named_mix(self, provider, candidates, instruction,
-                         name_hint, desc_hint, size):
-        """Run one name+description+ids mix prompt; validate; degrade safely."""
-        try:
-            data = provider.complete_json(_SYSTEM_SELECT, _wrap(instruction,
-                                                                 candidates))
-        except Exception:  # noqa: BLE001
-            logger.info("AI mix build failed", exc_info=True)
-            return {"name": name_hint, "description": desc_hint, "track_ids": []}
-        ids = self._extract_ids(data)
+    @staticmethod
+    def _extract_mixes(data):
+        """Pull the ordered list of raw mix objects out of a model response.
+
+        Accepts ``{"mixes": [...]}`` (preferred) or a bare top-level list, and
+        tolerates a single-mix dict by wrapping it. Anything else -> empty list,
+        which the caller pads to four theme-hint slots.
+        """
+        if isinstance(data, dict):
+            mixes = data.get("mixes")
+            if isinstance(mixes, list):
+                return mixes
+            # A lone mix dict (no wrapper) — treat as one mix.
+            if "track_ids" in data or "ids" in data:
+                return [data]
+            return []
+        if isinstance(data, list):
+            return data
+        return []
+
+    def _mix_from_raw(self, raw, name_hint, desc_hint, size):
+        """Validate+degrade one raw mix object exactly like the old per-mix path.
+
+        Returns ``{name, description, track_ids}``. The model's name/description
+        win when present, else the theme hint (same precedence as before). If the
+        ids are empty or under ``_MIN_VALID_FRACTION`` valid, degrades to the
+        theme hint with empty ``track_ids`` (same as the old _build_named_mix).
+        """
+        ids = self._extract_ids(raw)
         valid, frac = catalog.validate_ids(self.db, ids)
         valid = valid[:size]
         if frac < _MIN_VALID_FRACTION or not valid:
             return {"name": name_hint, "description": desc_hint, "track_ids": []}
         name = name_hint
         description = desc_hint
-        if isinstance(data, dict):
-            name = (data.get("name") or name_hint).strip() or name_hint
-            description = (data.get("description") or desc_hint).strip() or \
+        if isinstance(raw, dict):
+            name = (raw.get("name") or name_hint).strip() or name_hint
+            description = (raw.get("description") or desc_hint).strip() or \
                 desc_hint
         return {"name": name, "description": description, "track_ids": valid}
+
+    def _build_named_mix(self, provider, candidates, instruction,
+                         name_hint, desc_hint, size):
+        """Run one name+description+ids mix prompt; validate; degrade safely.
+
+        Still used by :meth:`_build_radios_ai` (one prompt per radio station).
+        The daily-mix path no longer uses it — it builds all four mixes in a
+        single call via :meth:`_build_mixes_ai`.
+        """
+        try:
+            data = provider.complete_json(_SYSTEM_SELECT, _wrap(instruction,
+                                                                 candidates))
+        except Exception:  # noqa: BLE001
+            logger.info("AI mix build failed", exc_info=True)
+            return {"name": name_hint, "description": desc_hint, "track_ids": []}
+        return self._mix_from_raw(data, name_hint, desc_hint, size)
 
     def _mixes_fallback(self):
         """Four deterministic heuristic mixes from local play data."""
