@@ -283,7 +283,12 @@ class TimbreWindow(Adw.ApplicationWindow):
 
             def work():
                 try:
-                    return client.restore(token, user_id, server_id)
+                    # Short interactive timeout: a moved/unreachable saved
+                    # server must fail fast so onboarding appears in seconds
+                    # rather than after the default 15s probe (≈ the onboarding
+                    # reachability probe's 5s). A dead server now lands the user
+                    # on onboarding quickly instead of a long blocking wait.
+                    return client.restore(token, user_id, server_id, timeout=6)
                 except JellyfinError:
                     return False
 
@@ -322,7 +327,7 @@ class TimbreWindow(Adw.ApplicationWindow):
         page.set_title(_("Timbre"))
         page.set_tag("home")
         tb = Adw.ToolbarView()
-        tb.add_top_bar(Adw.HeaderBar())
+        tb.add_top_bar(self._placeholder_header())
         status = Adw.StatusPage(
             icon_name="system-users-symbolic",
             title=_("Please sign in"),
@@ -506,6 +511,30 @@ class TimbreWindow(Adw.ApplicationWindow):
     # Placeholder pages                                                  #
     # ------------------------------------------------------------------ #
 
+    def _placeholder_header(self):
+        """Build a HeaderBar for placeholder pages WITH an escape-hatch menu.
+
+        The pre-login placeholder states (loading spinner, empty-library,
+        dismissed-onboarding sign-in prompt) would otherwise be menu-less dead
+        ends: if startup stalls on an unreachable saved server the user has no
+        way to reach onboarding / forget the server. This header carries a
+        primary (hamburger) menu whose single item routes to ``win.log-out``,
+        which clears the stored creds + server-url and shows onboarding —
+        ``logout()`` makes no client calls so it is safe before login. The item
+        is always reachable, so a stalled load can never trap the user.
+        """
+        header = Adw.HeaderBar()
+        menu = Gio.Menu()
+        menu.append(_("Sign in to a different server"), "win.log-out")
+        menu_button = Gtk.MenuButton(
+            icon_name="open-menu-symbolic",
+            menu_model=menu,
+            tooltip_text=_("Main Menu"),
+            primary=True,
+        )
+        header.pack_end(menu_button)
+        return header
+
     def _show_loading_placeholder(self):
         self.navigation_view.replace([self._status_page(
             "home", _("Timbre"), "emblem-music-symbolic",
@@ -542,7 +571,7 @@ class TimbreWindow(Adw.ApplicationWindow):
         page.set_title(title)
         page.set_tag(tag)
         tb = Adw.ToolbarView()
-        tb.add_top_bar(Adw.HeaderBar())
+        tb.add_top_bar(self._placeholder_header())
         tb.set_content(Adw.StatusPage(
             icon_name=icon, title=title, description=description
         ))

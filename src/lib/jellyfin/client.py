@@ -239,18 +239,25 @@ class JellyfinClient:
         )
         return self._apply_auth(data)
 
-    def restore(self, token, user_id, server_id) -> bool:
+    def restore(self, token, user_id, server_id, timeout=None) -> bool:
         """Validate a stored token via GET /Users/Me.
 
         On success sets client state and returns True. A 401 means the token
         is no longer valid -> returns False (no exception). Any other error
         propagates as JellyfinError.
+
+        ``timeout`` (seconds) overrides the module default for the probe. The
+        startup restore is an interactive reachability check driving the
+        loading spinner, so callers pass a short timeout (e.g. 6s) — a moved /
+        unreachable server then fails fast and onboarding appears in seconds
+        instead of after the full 15s default. Normal authenticated library
+        calls still use the 15s default.
         """
         self.token = token
         self.user_id = user_id
         self.server_id = server_id
         try:
-            self._req("GET", "/Users/Me")
+            self._req("GET", "/Users/Me", timeout=timeout)
         except JellyfinError as e:
             if e.status == 401:
                 self.token = None
