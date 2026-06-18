@@ -95,6 +95,17 @@ class HTCarouselWidget(Gtk.Box, IDisconnectable):
             adjustment,
             adjustment.connect("value-changed", self._update_button_sensitivity),
         ))
+        # The "value-changed" handler above only fires when the user scrolls.
+        # The scrollable RANGE (upper/page-size) isn't known until the carousel
+        # is allocated, which happens AFTER set_items' idle re-check; allocation
+        # fires "changed" (not "value-changed"). Without listening here, a
+        # carousel that overflows only after allocation keeps the next button
+        # stuck insensitive (computed against upper==page_size==0 at idle time)
+        # so mouse clicks on the arrows do nothing. Re-evaluate on "changed".
+        self.signals.append((
+            adjustment,
+            adjustment.connect("changed", self._update_button_sensitivity),
+        ))
 
     def set_more_function(self, function: Callable) -> None:
         """Set the ``(offset, limit) -> list`` fetch fn the More page uses."""
