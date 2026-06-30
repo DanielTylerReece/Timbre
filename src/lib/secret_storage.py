@@ -50,6 +50,17 @@ class SecretStore:
         self._secret = None
         self._memory: dict = {}
 
+        # Test/probe isolation: when TIMBRE_SECRET_BACKEND=memory, never touch
+        # the real Secret Service. This exists because a manual probe building
+        # a full TimbreWindow on a developer's own machine would otherwise hit
+        # the live gnome-keyring and could clobber real credentials (it did:
+        # startup_escape_check exercised logout() against the real keyring).
+        import os
+
+        if os.environ.get("TIMBRE_SECRET_BACKEND") == "memory":
+            logger.info("TIMBRE_SECRET_BACKEND=memory — using in-memory store")
+            return
+
         try:
             import gi
 
